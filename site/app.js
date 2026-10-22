@@ -537,7 +537,7 @@
   function renderBridge() {
     var br = state.bill.run.bridge;
     if (!br) {
-      $("bridge").innerHTML = '<p class="sub" style="grid-column:1/-1">Add a “Last month billed” column to the contracts file to see what changed since last month.</p>';
+      $("bridge").innerHTML = '<p class="sub">Add a “Last month billed” column to the contracts file to see what changed since last month.</p>';
       return;
     }
     var cum = br.last, scale = Math.max(br.last, br.now);
@@ -545,14 +545,14 @@
     scale = scale || 1;
     var pct = function (v) { return (Math.max(0, v) / scale * 100).toFixed(2) + "%"; };
     var row = function (who, sub, amtCls, amt, barCls, left, width) {
-      return '<div class="who"><b>' + who + "</b>" + (sub ? "<span>" + sub + "</span>" : "") + '</div><div class="amt ' + amtCls + '">' + amt + "</div>" +
-        '<div class="bar3"><div class="track"><i class="' + barCls + '" style="left:' + left + ";width:" + width + '"></i></div></div>';
+      return '<div class="brow' + (amtCls === "tot" && who === "This month" ? " total" : "") + '"><div class="who"><b>' + who + "</b>" + (sub ? "<span>" + sub + "</span>" : "") + '</div><div class="amt ' + amtCls + '">' + amt + "</div>" +
+        '<div class="bar3"><div class="track"><i class="' + barCls + '" style="left:' + left + ";width:" + width + '"></i></div></div></div>';
     };
     var html = row("Last month", "Billed on these contracts", "tot", bK(br.last), "base", "0%", pct(br.last));
     cum = br.last;
     br.items.forEach(function (it) {
       var from = Math.min(cum, cum + it.delta);
-      html += row(esc(it.customer), esc(it.contract) + " · " + esc(it.reason), it.delta > 0 ? "up" : "down", signed(it.delta), it.delta > 0 ? "up" : "down", pct(from), pct(Math.abs(it.delta)));
+      html += row(esc(it.customer), esc(it.contract) + " · " + esc(it.reason), it.delta > 0 ? "up" : "down", signed(it.delta), it.delta > 0 ? "up" : "down", Math.min(from / scale * 100, 99.3).toFixed(2) + "%", pct(Math.abs(it.delta)));
       cum += it.delta;
     });
     html += row("This month", state.bill.run.invoices.length + " invoices", "tot", bK(br.now), "base", "0%", pct(br.now));

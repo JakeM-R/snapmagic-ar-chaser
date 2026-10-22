@@ -1,6 +1,20 @@
 # SnapMagic AR chaser
 
-Who owes us money this fortnight, and what do I send each of them?
+Who do we invoice this month, who owes us money this fortnight, and what do I send each of them?
+
+The page runs in two steps. **Month-end billing** turns a contracts file into this month's invoices. **Aging & chasers** runs every two weeks on open invoices. Billed invoices hand straight into the aging run, so the loop is bill, age, chase.
+
+## Step 1: Month-end billing
+
+Upload a contracts CSV (one row per contract, from HubSpot or a Sheet), or use the demo contracts, and pick the month:
+
+1. **Who to bill:** active contracts on their cycle. Monthly bills every month, quarterly every third month from the start month, annual in the start month. Mid-month starts and ends are prorated by day. Usage units × unit price become their own line.
+2. **One invoice per customer,** a line per contract, numbered `INV-YYMM-001` onwards, issued on the last day of the month and due on the customer's terms.
+3. **Checked before sending:** no billing email, a PO required but missing, a monthly bill that moved 25% or more on last month for no contract reason, duplicate contracts, and bad rows. Contracts ending within 60 days get a renewal note.
+4. **Last month to this month:** a waterfall from last month's total to this one, with a reason for every change (new, ended, price change, usage, quarterly or annual bill). It reconciles to the cent.
+5. **Outputs:** a cover email per invoice (edit, copy or open in Gmail), a printable invoice (print or save as PDF), a CSV laid out for QuickBooks Online's invoice import, and **Send to aging run**, which adds the invoices to step 2 as open AR.
+
+## Step 2: Aging & chasers
 
 A working prototype by Jake Makking-Robinson for SnapMagic's finance operations remit: "run aging reports every two weeks, answer billing questions." Upload a HubSpot or QuickBooks invoice export (or use the demo data) and the page gives you:
 
@@ -17,10 +31,12 @@ A working prototype by Jake Makking-Robinson for SnapMagic's finance operations 
 | Path | What |
 |---|---|
 | `site/ar.js` | Core: CSV parser, column mapper, aging, rubric, templates, validator and Slack digest. Has no DOM or network code, so the same file runs in the browser, in Node tests and in Apps Script. |
-| `site/demo.js` | Demo dataset: 30 invoices across 12 generic customers (A to L), with every edge case seeded. |
+| `site/billing.js` | Billing core: contract column mapper, billing cycles, proration, usage, flags, the bridge, QuickBooks import CSV, cover emails and the hand-off to AR. Pure, like `ar.js`, and uses `ar.js` for parsing. |
+| `site/demo.js` | Demo data: 30 invoices and 13 contracts across 12 generic customers (A to L), with every edge case seeded. |
 | `site/app.js`, `site/index.html` | The page. |
 | `site/sheet-runner.js` | Apps Script glue. The page builds `Code.gs` by joining `ar.js` and this file, so the scheduled script uses the same code as the page. |
 | `worker/` | Cloudflare Worker that drafts with Claude. Rate-capped, and it builds the prompt itself, so callers can't use it as an open proxy. |
+| `tests/billing.test.js` | Billing: cycles, proration, usage, grouping, flags, terms, the bridge reconciling, and the hand-off ageing as open AR. |
 | `tests/ar.test.js` | The PRD test set plus checks on the validator, the demo data and the Apps Script. Uses mocked Sheets, Gmail and Slack. |
 
 ## How drafting works
@@ -63,5 +79,6 @@ GitHub Pages deploys `site/` on every push to `main`, after the tests pass.
 - **Logo:** "Built for SnapMagic" shows as a text wordmark for the same reason. Their unmodified logo file still needs adding to the header.
 - **Dates:** slash dates are read as US format (MM/DD/YYYY), as US HubSpot and QuickBooks exports produce them.
 - **Late history:** the late-history modifiers need a paid-date column. Without one, tone follows tier.
+- **Billing:** the Apps Script automates the aging run only; billing runs on the page. Invoices are numbered per run, so a re-run reuses numbers until QuickBooks takes over numbering. Taxes, discounts and credit notes aren't modelled.
 - **Out of scope:** live HubSpot or QuickBooks auth, sending email, DSO trends, multi-currency and payroll.
 - **Next (+5 working days):** promise-to-pay tracking. Log a customer's committed date, and the next run checks it before drafting: kept, broken (step up a tier) or pending (skip).

@@ -11,8 +11,24 @@
   var state = {
     source: "demo", fileName: "", rows: [], headers: [], map: {},
     ticks: {}, sort: { aging: "overdue", drafts: "overdue" }, onlyYou: { aging: false, drafts: false }, tab: "demo", runDate: todayUTC(), settings: Object.assign({}, AR.DEFAULT_SETTINGS),
-    result: null, drafts: {}, dirty: {}, open: {}, draftMode: "template", runId: 0
+    result: null, drafts: {}, dirty: {}, open: {}, draftMode: "template", runId: 0,
+    stage: "bill", billed: null,
+    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, period: null, run: null, emails: {}, dirty: {}, open: {}, pending: null }
   };
+  state.bill.period = BILL.periodOf(todayUTC()).start;
+
+  // Invoices sent over from the billing run, laid out in the current AR file's own columns.
+  function billedRows() {
+    if (!state.billed) return [];
+    var m = state.map;
+    return state.billed.records.map(function (rec) {
+      var o = {};
+      Object.keys(rec).forEach(function (k) { if (m[k]) o[m[k]] = rec[k]; });
+      if (m.balance && !m.paid) o[m.balance] = rec.amount;
+      return o;
+    });
+  }
+  function allRows() { return state.rows.concat(billedRows()); }
 
   function todayUTC() { var d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -174,7 +190,7 @@
   }
 
   function runAnalysis() {
-    state.result = AR.analyze(state.rows, state.map, state.runDate, state.settings);
+    state.result = AR.analyze(allRows(), state.map, state.runDate, state.settings);
     applyTicks(state.result);
     state.drafts = {}; state.dirty = {}; state.draftMode = "template";
     state.result.customers.forEach(function (c, i) { c.id = i; state.drafts[i] = maskDraft(AR.templateDraft(c, state.runDate, state.settings)); });
@@ -250,7 +266,14 @@
     co.push('<span class="callout"><b>' + chase + "</b> chaser draft" + (chase === 1 ? "" : "s") + " ready</span>");
     if (billing) co.push('<span class="callout"><b>' + billing + "</b> billing repl" + (billing === 1 ? "y" : "ies") + "</span>");
     if (res.excludedTotal) co.push('<span class="callout"><b>' + res.excludedTotal + "</b> rows excluded</span>");
+    if (state.billed) {
+      var b = state.billed;
+      co.push('<span class="callout"><b>' + b.count + "</b> invoice" + (b.count === 1 ? "" : "s") + " from the " + esc(b.label) + " billing run included, due " + esc(AR.fmtShortDate(b.firstDue)) +
+        (b.demo && !isDemo() ? " (demo invoices in your file)" : "") + '<button class="link" type="button" id="unbill">Remove</button></span>');
+    }
     $("callouts").innerHTML = co.join("");
+    var ub = $("unbill");
+    if (ub) ub.onclick = function () { state.billed = null; runAnalysis(); renderHandoff(); };
 
     renderAging();
     renderCards();
@@ -305,9 +328,10 @@
     if (ex.noDueDate) parts.push(ex.noDueDate + " missing a due date");
     if (ex.duplicate) parts.push(ex.duplicate + " duplicate invoice #");
     if (ex.unreadable) parts.push(ex.unreadable + " unreadable");
+    var nRows = allRows().length;
     $("excluded").textContent = res.excludedTotal
-      ? "Excluded " + res.excludedTotal + " of " + state.rows.length + " rows: " + parts.join(", ") + "."
-      : "No rows excluded (" + state.rows.length + " rows).";
+      ? "Excluded " + res.excludedTotal + " of " + nRows + " rows: " + parts.join(", ") + "."
+      : "No rows excluded (" + nRows + " rows).";
   }
 
   function tierBadge(c) {
@@ -414,6 +438,303 @@
       .catch(function () { $("scriptCode").textContent = "Couldn't load the script. Serve the page over http(s) rather than file://."; });
   }
 
+  // ---------- Stages ----------
+
+  function setStage(s, quiet) {
+    state.stage = s;
+    document.body.dataset.stage = s;
+    $("stageBill").setAttribute("aria-selected", s === "bill");
+    $("stageAge").setAttribute("aria-selected", s === "age");
+    try { history.replaceState(null, "", s === "age" ? "#aging" : "#billing"); } catch (e) { /* file:// */ }
+    if (!quiet) window.scrollTo({ top: 0 });
+    if (s === "age") document.querySelectorAll("#cards textarea").forEach(fit);
+    else document.querySelectorAll("#invCards textarea").forEach(fit);
+  }
+
+  // ---------- Month-end billing ----------
+
+  function billDemo() { return state.bill.source === "demo"; }
+  function bMask(text) { return billDemo() ? String(text).replace(MONEY_RE, "$$xx") : String(text); }
+  function bMoney(n) { return billDemo() ? "$xx" : AR.fmtMoney(n); }
+  function bK(n) { return billDemo() ? "$xx" : AR.fmtK(n); }
+  function signed(n) { return billDemo() ? (n < 0 ? "−$xx" : "+$xx") : (n < 0 ? "−" : "+") + AR.fmtK(Math.abs(n)); }
+
+  function download(name, text, type) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: type || "text/csv" }));
+    a.download = name; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+  }
+
+  function loadBillDemo() {
+    var p = AR.parseCSV(DEMO.contractsCSV(state.bill.period));
+    var b = state.bill;
+    b.source = "demo"; b.fileName = ""; b.headers = p.headers; b.rows = p.rows; b.map = BILL.autoMap(p.headers);
+    $("billMapper").innerHTML = "";
+    runBilling();
+  }
+
+  function runBilling() {
+    var b = state.bill;
+    b.run = BILL.billingRun(b.rows, b.map, b.period);
+    b.emails = {}; b.dirty = {};
+    b.run.invoices.forEach(function (inv, i) {
+      inv.id = i;
+      var e = BILL.coverEmail(inv, b.run, state.settings);
+      if (billDemo()) { e.subject = bMask(e.subject); e.body = bMask(e.body); }
+      b.emails[i] = e;
+    });
+    renderBilling();
+  }
+
+  function kindBadge(inv) {
+    var n = inv.notes.join(" "), c = inv.contracts;
+    if (/New contract/.test(n)) return '<span class="badge new">New</span>';
+    if (/final invoice/.test(n)) return '<span class="badge final">Final</span>';
+    if (c.some(function (x) { return x.freq.months === 12 && x.onCycle; })) return '<span class="badge">Annual</span>';
+    if (c.some(function (x) { return x.freq.months === 3 && x.onCycle; })) return '<span class="badge">Quarterly</span>';
+    if (c.some(function (x) { return x.usage; })) return '<span class="badge">Usage</span>';
+    if (/renewal/.test(n)) return '<span class="badge final">Renewal due</span>';
+    return '<span class="badge">Monthly</span>';
+  }
+
+  function renderBilling() {
+    var b = state.bill, run = b.run, P = run.period;
+    $("billMonth").value = P.key;
+    var n = run.invoices.length;
+    $("billHeadline").innerHTML = n + " invoice" + (n === 1 ? "" : "s") + " to send" +
+      '<span class="sep">·</span><small>' + bK(run.total) + " billed</small>";
+    $("billDates").innerHTML = "Billing month <b>" + esc(P.label) + "</b><br>Issued <b>" + esc(AR.fmtDate(P.end)) + "</b>";
+
+    var needs = run.invoices.filter(function (i) { return i.needsYou; }).map(function (i) { return i.customer; })
+      .concat(run.skipped.filter(function (s) { return s.needsYou; }).map(function (s) { return s.customer; }));
+    var co = [];
+    if (needs.length) co.push('<span class="callout you"><b>' + needs.length + " to check before sending</b>: " + needs.map(esc).join(", ") + "</span>");
+    if (run.bridge) co.push('<span class="callout"><b>' + signed(run.bridge.change) + "</b> on last month, " + run.bridge.items.length + " change" + (run.bridge.items.length === 1 ? "" : "s") + " explained</span>");
+    var off = run.skipped.filter(function (s) { return !s.needsYou; }).length;
+    if (off) co.push('<span class="callout"><b>' + off + "</b> contract" + (off === 1 ? "" : "s") + " not billed this month</span>");
+    if (run.unreadable) co.push('<span class="callout"><b>' + run.unreadable + "</b> unreadable row" + (run.unreadable === 1 ? "" : "s") + " (no customer or fee)</span>");
+    $("billCallouts").innerHTML = co.join("");
+
+    $("billSrc").innerHTML = billDemo()
+      ? '<span class="pill demo">Demo contracts</span><span>' + b.rows.length + " fictional contracts across " + new Set(b.rows.map(function (r) { return r[b.map.customer]; })).size + " customers</span>" +
+        '<span class="spacer"></span><label for="billFile" class="btn" tabindex="0" data-bpick>Upload contracts CSV</label><button class="btn ghost" type="button" id="billTpl">Template</button>'
+      : '<span class="pill file">' + esc(b.fileName) + "</span><span>" + b.rows.length + " contracts</span>" +
+        '<span class="spacer"></span><label for="billFile" class="btn" tabindex="0" data-bpick>Choose another file</label><button class="btn ghost" type="button" id="billBackDemo">Back to demo</button>';
+    if ($("billTpl")) $("billTpl").onclick = function () { download("billing-contracts-template.csv", billTemplate()); };
+    if ($("billBackDemo")) $("billBackDemo").onclick = loadBillDemo;
+
+    renderBridge();
+    renderInvoices();
+    var nb = run.skipped;
+    $("notBilled").innerHTML = nb.length
+      ? "<b>Not billed this month:</b> " + nb.map(function (s) { return esc(s.customer) + " (" + esc(s.reason) + ")"; }).join("; ")
+      : "";
+    renderBillRules();
+    renderHandoff();
+  }
+
+  function renderBridge() {
+    var br = state.bill.run.bridge;
+    if (!br) {
+      $("bridge").innerHTML = '<p class="sub" style="grid-column:1/-1">Add a “Last month billed” column to the contracts file to see what changed since last month.</p>';
+      return;
+    }
+    var cum = br.last, scale = Math.max(br.last, br.now);
+    br.items.forEach(function (it) { cum += it.delta; scale = Math.max(scale, cum); });
+    scale = scale || 1;
+    var pct = function (v) { return (Math.max(0, v) / scale * 100).toFixed(2) + "%"; };
+    var row = function (who, sub, amtCls, amt, barCls, left, width) {
+      return '<div class="who"><b>' + who + "</b>" + (sub ? "<span>" + sub + "</span>" : "") + '</div><div class="amt ' + amtCls + '">' + amt + "</div>" +
+        '<div class="bar3"><div class="track"><i class="' + barCls + '" style="left:' + left + ";width:" + width + '"></i></div></div>';
+    };
+    var html = row("Last month", "Billed on these contracts", "tot", bK(br.last), "base", "0%", pct(br.last));
+    cum = br.last;
+    br.items.forEach(function (it) {
+      var from = Math.min(cum, cum + it.delta);
+      html += row(esc(it.customer), esc(it.contract) + " · " + esc(it.reason), it.delta > 0 ? "up" : "down", signed(it.delta), it.delta > 0 ? "up" : "down", pct(from), pct(Math.abs(it.delta)));
+      cum += it.delta;
+    });
+    html += row("This month", state.bill.run.invoices.length + " invoices", "tot", bK(br.now), "base", "0%", pct(br.now));
+    $("bridge").innerHTML = html;
+  }
+
+  function renderInvoices() {
+    var b = state.bill, run = b.run;
+    var list = run.invoices.slice().sort(function (x, y) { return (y.needsYou - x.needsYou) || x.customer.localeCompare(y.customer); });
+    $("invCards").innerHTML = list.map(function (inv) {
+      var e = b.emails[inv.id];
+      var facts = esc(inv.number) + " · " + bMoney(inv.total) + " · " + inv.lines.length + " line" + (inv.lines.length === 1 ? "" : "s") + " · due " + esc(AR.fmtShortDate(inv.dueDate));
+      var summary = '<summary><div class="sl"><div class="cname">' + esc(inv.customer) + "</div>" +
+        '<div class="facts num">' + (billDemo() ? '<span class="tag demo">Demo</span> ' : "") + facts + "</div>" +
+        '<div class="contact">' + (inv.email ? esc(inv.email) : "No billing email") + "</div>" +
+        '<div class="preview">' + esc(inv.flags[0] || inv.notes[0] || "Ready to send") + "</div></div>" +
+        '<div class="sr2">' + (inv.needsYou ? '<span class="tag you">Needs action</span>' : "") + kindBadge(inv) +
+        '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div></summary>';
+      var flags = inv.flags.length ? '<ul class="flags">' + inv.flags.map(function (f) { return "<li>" + esc(f) + "</li>"; }).join("") + "</ul>" : "";
+      var notes = inv.notes.length ? '<ul class="notes">' + inv.notes.map(function (f) { return "<li>" + esc(f) + "</li>"; }).join("") + "</ul>" : "";
+      var lines = '<table class="lines num"><thead><tr><th>Line</th><th class="r hide-sm">Qty</th><th class="r hide-sm">Rate</th><th class="r">Amount</th></tr></thead><tbody>' +
+        inv.lines.map(function (l) {
+          return "<tr><td>" + esc(l.description) + '</td><td class="r hide-sm">' + l.qty.toLocaleString("en-US") + '</td><td class="r hide-sm">' + bMoney(l.rate) + '</td><td class="r">' + bMoney(l.amount) + "</td></tr>";
+        }).join("") + '</tbody><tfoot><tr><td>Total' + (inv.pos.length ? " · PO " + esc(inv.pos.join(", ")) : "") + '</td><td class="hide-sm"></td><td class="hide-sm"></td><td class="r">' + bMoney(inv.total) + "</td></tr></tfoot></table>";
+      var view = '<button class="btn" type="button" data-view="' + inv.id + '">View invoice</button>';
+      var mail = inv.email
+        ? '<div class="addr"><b>To</b> ' + esc(e.to) + (e.cc ? " · <b>Cc</b> " + esc(e.cc) : "") + "</div>" +
+          '<input class="subj" data-bid="' + inv.id + '" aria-label="Subject" value="' + esc(e.subject) + '">' +
+          '<textarea data-bid="' + inv.id + '" aria-label="Cover email" spellcheck="true">' + esc(e.body) + "</textarea>" +
+          '<div class="ft"><button class="btn primary" type="button" data-bcopy="' + inv.id + '">Copy email</button>' +
+          '<a class="btn" target="_blank" rel="noopener" data-bgmail="' + inv.id + '" href="' + gmailUrl(e) + '">Open in Gmail</a>' + view +
+          '<span class="src">Template' + (b.dirty[inv.id] ? " · edited" : "") + "</span></div>"
+        : '<div class="needs"><b>Needs action</b><p>No billing email on the contract. Add one and re-run before this invoice can go out.</p></div><div class="ft">' + view + "</div>";
+      return '<details class="card' + (inv.needsYou ? " you" : "") + '" data-inv="' + inv.id + '"' + (b.open[inv.id] ? " open" : "") + ">" + summary +
+        '<div class="bd">' + flags + notes + lines + mail + "</div></details>";
+    }).join("");
+    document.querySelectorAll("#invCards textarea").forEach(fit);
+  }
+
+  function renderBillRules() {
+    if ($("billRules").dataset.done) return;
+    $("billRules").dataset.done = "1";
+    $("billRules").innerHTML = "<ul>" +
+      "<li><b>Who's billed:</b> contracts active in the month and on their cycle, billed in advance. Monthly bills every month, quarterly every third month from the start month, annual in the start month each year.</li>" +
+      "<li><b>Proration:</b> a monthly contract that starts or ends mid-month is billed for the days it covers.</li>" +
+      "<li><b>Usage:</b> usage units × unit price, as its own line.</li>" +
+      "<li><b>One invoice per customer:</b> a line for each contract, numbered INV-YYMM-001 onwards, issued on the last day of the month and due on the customer's terms (Net 30 if blank).</li>" +
+      "<li><b>Checked before sending:</b> no billing email, a PO required but missing, a monthly bill up or down 25% or more on last month with no new, final or cycle reason, duplicate contracts, and rows with no start date or an unknown frequency.</li>" +
+      "<li><b>Heads-up:</b> contracts ending within 60 days get a renewal note.</li>" +
+      "<li><b>Bridge:</b> last month's total to this month's, with a reason for every change: new, ended, price change, usage, or a quarterly or annual bill.</li>" +
+      "<li><b>Hand-off:</b> the invoices join the aging run as open invoices, so the fortnightly chasers pick them up once they fall due. The QuickBooks file is laid out for QuickBooks Online's invoice import.</li>" +
+      "</ul>";
+  }
+
+  function renderHandoff() {
+    var run = state.bill.run;
+    if (!run) return;
+    var ready = run.invoices.filter(function (i) { return !i.needsYou; }).length;
+    $("handoff").innerHTML = "<p><b>" + run.invoices.length + " invoices · " + bK(run.total) + "</b>, issued " + esc(AR.fmtShortDate(run.period.end)) + ". " +
+      ready + " ready, " + (run.invoices.length - ready) + " to check first.</p>" +
+      '<button class="btn" type="button" id="dlQbo">QuickBooks import CSV</button>' +
+      '<button class="btn" type="button" id="dlAr">AR rows CSV</button>' +
+      '<button class="btn primary" type="button" id="toAging">Send to aging run</button>';
+    $("dlQbo").onclick = function () { download("invoices-" + run.period.key + "-quickbooks.csv", BILL.importCSV(run)); };
+    $("dlAr").onclick = function () { download("invoices-" + run.period.key + "-ar-rows.csv", BILL.arCSV(run)); };
+    $("toAging").onclick = sendToAging;
+    var b = state.billed;
+    $("sentNote").hidden = !(b && b.key === run.period.key);
+    if (b) $("sentNote").textContent = "Sent: " + b.count + " invoices are in the aging run. Move its run date past " + AR.fmtDate(b.firstDue) + " to watch them come due.";
+  }
+
+  function sendToAging() {
+    var run = state.bill.run;
+    if (!run || !run.invoices.length) return;
+    state.billed = {
+      key: run.period.key, label: run.period.label, count: run.invoices.length, demo: billDemo(),
+      firstDue: Math.min.apply(null, run.invoices.map(function (i) { return i.dueDate; })),
+      records: BILL.arRecords(run)
+    };
+    if (state.tab === "upload" && isDemo()) setTab("demo");
+    runAnalysis();
+    renderHandoff();
+    setStage("age");
+  }
+
+  function billTemplate() {
+    return DEMO.CONTRACT_HEADERS.join(",") + "\n" +
+      "C-001,Customer A,billing@customer-a.example,,Sponsored placement,2400.00,Monthly,2026-01-01,2026-12-31,PO-1001,Yes,,,Net 30,2400.00\n" +
+      "C-002,Customer B,billing@customer-b.example,payables@customer-b.example,CAD model library build,9000.00,Quarterly,2026-04-01,,,,,,Net 45,\n" +
+      "C-003,Customer C,billing@customer-c.example,,Sponsored placement,5000.00,Monthly,2026-03-01,,,,1240,1.50,Net 30,6420.00\n";
+  }
+
+  function renderBillGuide() {
+    var need = function (f) {
+      return f.required ? '<span class="need req">Required</span>' : f.recommended ? '<span class="need rec">Recommended</span>' : '<span class="need opt">Optional</span>';
+    };
+    var names = {};
+    DEMO.CONTRACT_HEADERS.forEach(function (h) { var k = BILL.autoMap([h]); Object.keys(k).forEach(function (x) { names[x] = h; }); });
+    $("billGuideTable").innerHTML = "<table><thead><tr><th>Column</th><th></th><th>What it's used for</th></tr></thead><tbody>" +
+      BILL.FIELDS.map(function (f) {
+        return '<tr><td class="f">' + esc(names[f.key] || f.label) + "</td><td>" + need(f) + '</td><td class="u">' + esc(f.use) + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  function loadBillFile(file) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var p = AR.parseCSV(reader.result);
+      if (!p.headers.length || !p.rows.length) { $("billMapper").innerHTML = '<div class="mapper"><p class="err">That file has no rows.</p></div>'; return; }
+      state.bill.pending = { headers: p.headers, rows: p.rows, name: file.name };
+      renderBillMapper(p.headers, BILL.autoMap(p.headers), file.name, p.rows.length);
+    };
+    reader.readAsText(file);
+  }
+
+  function renderBillMapper(headers, map, name, n) {
+    var opts = function (sel) {
+      return '<option value="">Not in file</option>' + headers.map(function (h) {
+        return '<option value="' + esc(h) + '"' + (h === sel ? " selected" : "") + ">" + esc(h) + "</option>";
+      }).join("");
+    };
+    $("billMapper").innerHTML =
+      '<div class="mapper" style="margin-top:20px"><h3>Match columns: ' + esc(name) + "</h3>" +
+      "<p>" + n + " rows. Matched from your headers; check anything marked required. The column guide at the bottom says what each one does.</p>" +
+      '<div class="mapgrid">' + BILL.FIELDS.map(function (f) {
+        return "<label>" + esc(f.label) + (f.required ? ' <span class="req">required</span>' : "") +
+          '<select data-bk="' + f.key + '">' + opts(map[f.key]) + "</select></label>";
+      }).join("") + "</div>" +
+      '<div class="actions"><button class="btn primary" id="bApply" type="button">Run billing</button>' +
+      '<button class="btn ghost" id="bCancel" type="button">Cancel</button><span class="err" id="bErr"></span></div></div>';
+    $("bApply").onclick = function () {
+      var m = {};
+      document.querySelectorAll("#billMapper select").forEach(function (s) { if (s.value) m[s.dataset.bk] = s.value; });
+      var miss = BILL.missingRequired(m);
+      if (miss.length) { $("bErr").textContent = "Still needed: " + miss.join(", "); return; }
+      var b = state.bill, pd = b.pending;
+      b.source = "file"; b.fileName = pd.name; b.headers = pd.headers; b.rows = pd.rows; b.map = m;
+      $("billMapper").innerHTML = "";
+      runBilling();
+    };
+    $("bCancel").onclick = function () { $("billMapper").innerHTML = ""; };
+    $("billMapper").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /* A printable invoice. Print or save as PDF from the new tab. */
+  function invoiceDoc(inv) {
+    var run = state.bill.run, demo = billDemo();
+    var m = function (n) { return demo ? "$xx" : AR.fmtMoney(n); };
+    var rows = inv.lines.map(function (l) {
+      return "<tr><td>" + esc(l.description) + '</td><td class="r">' + l.qty.toLocaleString("en-US") + '</td><td class="r">' + m(l.rate) + '</td><td class="r">' + m(l.amount) + "</td></tr>";
+    }).join("");
+    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' + esc(inv.number) + "</title>" +
+      "<style>body{margin:0;background:#F5F5F5;font:14px/1.5 Inter,system-ui,sans-serif;color:#1D2430;font-variant-numeric:tabular-nums}" +
+      ".page{max-width:760px;margin:24px auto;background:#fff;border:1px solid #E2E2E2;border-radius:12px;padding:40px}" +
+      ".top{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}h1{margin:0;font-size:28px;color:#34507A;letter-spacing:-.02em}" +
+      ".muted{color:#7A818C;font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin:28px 0}" +
+      ".grid b{display:block;font-size:12px;color:#7A818C;font-weight:500}table{width:100%;border-collapse:collapse;margin-top:8px}" +
+      "th,td{padding:10px 0;border-bottom:1px solid #E2E2E2;text-align:left;vertical-align:top}th{font-size:12px;color:#7A818C;font-weight:500}" +
+      ".r{text-align:right;padding-left:16px;white-space:nowrap}.tot td{border:none;font-weight:700;font-size:16px;padding-top:16px}" +
+      ".demo{background:#FDF0E6;color:#B85A1C;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;margin-bottom:24px}" +
+      ".bar{max-width:760px;margin:16px auto 0;display:flex;justify-content:flex-end;gap:8px}button{font:inherit;height:34px;padding:0 14px;border-radius:8px;border:1px solid #EE8038;background:#EE8038;color:#fff;cursor:pointer}" +
+      "@media print{body{background:#fff}.page{border:none;margin:0;max-width:none;padding:0}.bar{display:none}}</style></head><body>" +
+      '<div class="bar"><button onclick="window.print()">Print or save as PDF</button></div><div class="page">' +
+      (demo ? '<div class="demo">Demo invoice: fictional customer, amounts hidden. Not a real invoice.</div>' : "") +
+      '<div class="top"><div><h1>Invoice</h1><div class="muted">' + esc(inv.number) + '</div></div><div style="text-align:right"><b>SnapMagic</b><div class="muted">Billing</div></div></div>' +
+      '<div class="grid"><div><b>Bill to</b>' + esc(inv.customer) + (inv.email ? '<div class="muted">' + esc(inv.email) + "</div>" : "") + "</div>" +
+      "<div><b>Issued</b>" + esc(AR.fmtDate(inv.issueDate)) + "</div><div><b>Due</b>" + esc(AR.fmtDate(inv.dueDate)) + '<div class="muted">' + esc(inv.terms) + "</div></div>" +
+      (inv.pos.length ? "<div><b>PO</b>" + esc(inv.pos.join(", ")) + "</div>" : "") + "</div>" +
+      '<table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' + rows +
+      '</tbody><tfoot><tr class="tot"><td colspan="3">Total due</td><td class="r">' + m(inv.total) + "</td></tr></tfoot></table>" +
+      '<p class="muted" style="margin-top:32px">Service period: ' + esc(run.period.label) + ". Questions about this invoice: reply to the email it came with.</p>" +
+      "</div></body></html>";
+  }
+
+  function viewInvoice(id) {
+    var inv = state.bill.run.invoices[id];
+    var url = URL.createObjectURL(new Blob([invoiceDoc(inv)], { type: "text/html" }));
+    var w = window.open(url, "_blank");
+    if (!w) download(inv.number + ".html", invoiceDoc(inv), "text/html");
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+
   // ---------- Events ----------
 
   $("runDate").addEventListener("change", function (e) {
@@ -452,6 +773,38 @@
     state.settings.founderRole = $("fRole").value.trim() || AR.DEFAULT_SETTINGS.founderRole;
     $("settings").open = false;
     runAnalysis();
+    if (state.bill.run) runBilling();
+  });
+
+  // Billing events
+  $("stageBill").addEventListener("click", function () { setStage("bill"); });
+  $("stageAge").addEventListener("click", function () { setStage("age"); });
+  $("billMonth").addEventListener("change", function (e) {
+    var P = BILL.periodOf(e.target.value);
+    if (!P) return;
+    state.bill.period = P.start;
+    if (billDemo()) loadBillDemo(); else runBilling();
+  });
+  $("billFile").addEventListener("change", function (e) { if (e.target.files[0]) loadBillFile(e.target.files[0]); e.target.value = ""; });
+  $("billStage").addEventListener("keydown", function (e) {
+    if (e.target.hasAttribute && e.target.hasAttribute("data-bpick") && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); $("billFile").click(); }
+  });
+  $("invCards").addEventListener("toggle", function (e) {
+    var el = e.target; if (!el.dataset || el.dataset.inv == null) return;
+    state.bill.open[el.dataset.inv] = el.open;
+    if (el.open) el.querySelectorAll("textarea").forEach(fit);
+  }, true);
+  $("invCards").addEventListener("input", function (e) {
+    var id = e.target.dataset.bid; if (id == null) return;
+    var d = state.bill.emails[id];
+    if (e.target.tagName === "TEXTAREA") { d.body = e.target.value; fit(e.target); } else d.subject = e.target.value;
+    state.bill.dirty[id] = true;
+    var a = document.querySelector('[data-bgmail="' + id + '"]'); if (a) a.href = gmailUrl(d);
+  });
+  $("invCards").addEventListener("click", function (e) {
+    var t = e.target;
+    if (t.dataset.view != null) { viewInvoice(+t.dataset.view); return; }
+    if (t.dataset.bcopy != null) { var d = state.bill.emails[t.dataset.bcopy]; copy("Subject: " + d.subject + "\n\n" + d.body, t); }
   });
 
   // Cards are collapsed by default; remember which are open across re-renders.
@@ -499,7 +852,10 @@
   });
 
   renderGuide();
+  renderBillGuide();
   loadDemo();
+  loadBillDemo();
   loadScript();
+  setStage(/^#(aging|age|ar)/.test(location.hash) ? "age" : "bill", true);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { document.querySelectorAll("#cards textarea").forEach(fit); });
 })();

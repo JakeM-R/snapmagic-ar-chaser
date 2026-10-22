@@ -577,7 +577,7 @@
         inv.lines.map(function (l) {
           return "<tr><td>" + esc(l.description) + '</td><td class="r hide-sm">' + l.qty.toLocaleString("en-US") + '</td><td class="r hide-sm">' + bMoney(l.rate) + '</td><td class="r">' + bMoney(l.amount) + "</td></tr>";
         }).join("") + '</tbody><tfoot><tr><td>Total' + (inv.pos.length ? " · PO " + esc(inv.pos.join(", ")) : "") + '</td><td class="hide-sm"></td><td class="hide-sm"></td><td class="r">' + bMoney(inv.total) + "</td></tr></tfoot></table>";
-      var view = '<button class="btn" type="button" data-view="' + inv.id + '">View invoice</button>';
+      var view = '<button class="btn" type="button" data-view="' + inv.id + '">Download PDF</button>';
       var mail = inv.email
         ? '<div class="addr"><b>To</b> ' + esc(e.to) + (e.cc ? " · <b>Cc</b> " + esc(e.cc) : "") + "</div>" +
           '<input class="subj" data-bid="' + inv.id + '" aria-label="Subject" value="' + esc(e.subject) + '">' +
@@ -613,9 +613,11 @@
     var ready = run.invoices.filter(function (i) { return !i.needsYou; }).length;
     $("handoff").innerHTML = "<p><b>" + run.invoices.length + " invoices · " + bK(run.total) + "</b>, issued " + esc(AR.fmtShortDate(run.period.end)) + ". " +
       ready + " ready, " + (run.invoices.length - ready) + " to check first.</p>" +
+      '<button class="btn" type="button" id="dlPdfs">All invoices PDF</button>' +
       '<button class="btn" type="button" id="dlQbo">QuickBooks import CSV</button>' +
       '<button class="btn" type="button" id="dlAr">AR rows CSV</button>' +
       '<button class="btn primary" type="button" id="toAging">Send to aging run</button>';
+    $("dlPdfs").onclick = function (e) { downloadPDF(run.invoices, "invoices-" + run.period.key + ".pdf", e.target); };
     $("dlQbo").onclick = function () { download("invoices-" + run.period.key + "-quickbooks.csv", BILL.importCSV(run)); };
     $("dlAr").onclick = function () { download("invoices-" + run.period.key + "-ar-rows.csv", BILL.arCSV(run)); };
     $("toAging").onclick = sendToAging;
@@ -697,42 +699,26 @@
     $("billMapper").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  /* A printable invoice. Print or save as PDF from the new tab. */
-  function invoiceDoc(inv) {
-    var run = state.bill.run, demo = billDemo();
-    var m = function (n) { return demo ? "$xx" : AR.fmtMoney(n); };
-    var rows = inv.lines.map(function (l) {
-      return "<tr><td>" + esc(l.description) + '</td><td class="r">' + l.qty.toLocaleString("en-US") + '</td><td class="r">' + m(l.rate) + '</td><td class="r">' + m(l.amount) + "</td></tr>";
-    }).join("");
-    return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>' + esc(inv.number) + "</title>" +
-      "<style>body{margin:0;background:#F5F5F5;font:14px/1.5 Inter,system-ui,sans-serif;color:#1D2430;font-variant-numeric:tabular-nums}" +
-      ".page{max-width:760px;margin:24px auto;background:#fff;border:1px solid #E2E2E2;border-radius:12px;padding:40px}" +
-      ".top{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap}h1{margin:0;font-size:28px;color:#34507A;letter-spacing:-.02em}" +
-      ".muted{color:#7A818C;font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin:28px 0}" +
-      ".grid b{display:block;font-size:12px;color:#7A818C;font-weight:500}table{width:100%;border-collapse:collapse;margin-top:8px}" +
-      "th,td{padding:10px 0;border-bottom:1px solid #E2E2E2;text-align:left;vertical-align:top}th{font-size:12px;color:#7A818C;font-weight:500}" +
-      ".r{text-align:right;padding-left:16px;white-space:nowrap}.tot td{border:none;font-weight:700;font-size:16px;padding-top:16px}" +
-      ".demo{background:#FDF0E6;color:#B85A1C;padding:8px 12px;border-radius:8px;font-size:13px;font-weight:600;margin-bottom:24px}" +
-      ".bar{max-width:760px;margin:16px auto 0;display:flex;justify-content:flex-end;gap:8px}button{font:inherit;height:34px;padding:0 14px;border-radius:8px;border:1px solid #EE8038;background:#EE8038;color:#fff;cursor:pointer}" +
-      "@media print{body{background:#fff}.page{border:none;margin:0;max-width:none;padding:0}.bar{display:none}}</style></head><body>" +
-      '<div class="bar"><button onclick="window.print()">Print or save as PDF</button></div><div class="page">' +
-      (demo ? '<div class="demo">Demo invoice: fictional customer, amounts hidden. Not a real invoice.</div>' : "") +
-      '<div class="top"><div><h1>Invoice</h1><div class="muted">' + esc(inv.number) + '</div></div><div style="text-align:right"><b>SnapMagic</b><div class="muted">Billing</div></div></div>' +
-      '<div class="grid"><div><b>Bill to</b>' + esc(inv.customer) + (inv.email ? '<div class="muted">' + esc(inv.email) + "</div>" : "") + "</div>" +
-      "<div><b>Issued</b>" + esc(AR.fmtDate(inv.issueDate)) + "</div><div><b>Due</b>" + esc(AR.fmtDate(inv.dueDate)) + '<div class="muted">' + esc(inv.terms) + "</div></div>" +
-      (inv.pos.length ? "<div><b>PO</b>" + esc(inv.pos.join(", ")) + "</div>" : "") + "</div>" +
-      '<table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' + rows +
-      '</tbody><tfoot><tr class="tot"><td colspan="3">Total due</td><td class="r">' + m(inv.total) + "</td></tr></tfoot></table>" +
-      '<p class="muted" style="margin-top:32px">Service period: ' + esc(run.period.label) + ". Questions about this invoice: reply to the email it came with.</p>" +
-      "</div></body></html>";
+  /* Invoice PDFs are drawn in the browser and saved directly. jsPDF is vendored and loaded on first use. */
+  var pdfLib = null;
+  function withPDF(fn) {
+    if (window.jspdf) return fn(window.jspdf.jsPDF);
+    if (!pdfLib) pdfLib = new Promise(function (ok, fail) {
+      var s = document.createElement("script");
+      s.src = "vendor/jspdf-2.5.1.umd.min.js";
+      s.onload = function () { ok(window.jspdf.jsPDF); };
+      s.onerror = function () { pdfLib = null; fail(new Error("load")); };
+      document.head.appendChild(s);
+    });
+    pdfLib.then(fn, function () { alert("Couldn't load the PDF generator. Check your connection and try again."); });
   }
-
-  function viewInvoice(id) {
-    var inv = state.bill.run.invoices[id];
-    var url = URL.createObjectURL(new Blob([invoiceDoc(inv)], { type: "text/html" }));
-    var w = window.open(url, "_blank");
-    if (!w) download(inv.number + ".html", invoiceDoc(inv), "text/html");
-    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  function downloadPDF(invoices, name, btn) {
+    var label = btn && btn.textContent;
+    if (btn) { btn.textContent = "Preparing…"; btn.disabled = true; }
+    withPDF(function (jsPDF) {
+      INVPDF.build(jsPDF, invoices, state.bill.run, billDemo()).save(name);
+      if (btn) { btn.textContent = "Downloaded"; btn.classList.add("done"); setTimeout(function () { btn.textContent = label; btn.disabled = false; btn.classList.remove("done"); }, 1400); }
+    });
   }
 
   // ---------- Events ----------
@@ -803,7 +789,7 @@
   });
   $("invCards").addEventListener("click", function (e) {
     var t = e.target;
-    if (t.dataset.view != null) { viewInvoice(+t.dataset.view); return; }
+    if (t.dataset.view != null) { var vi = state.bill.run.invoices[+t.dataset.view]; downloadPDF([vi], vi.number + ".pdf", t); return; }
     if (t.dataset.bcopy != null) { var d = state.bill.emails[t.dataset.bcopy]; copy("Subject: " + d.subject + "\n\n" + d.body, t); }
   });
 

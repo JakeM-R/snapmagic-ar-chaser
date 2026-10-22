@@ -74,5 +74,38 @@
     return lines.join("\n");
   }
 
-  return { csv: csv, HEADERS: HEADERS, count: ROWS.length };
+  // ---------- Contracts for the month-end billing run ----------
+  // [contract, customer, apEmail, description, fee, frequency, startMonths, startDay, endMonths, po, poRequired, units, unitPrice, lastBilled]
+  // startMonths / endMonths are relative to the billing month. endMonths is the month whose last
+  // day the contract ends on; null means no end date. Emails follow the AR demo customers.
+  var CONTRACTS = [
+    ["C-101", "Customer A", "", "Sponsored placement", 2400, "Monthly", -14, 1, 10, "", "", "", "", 2400],
+    ["C-102", "Customer B", "", "Sponsored placement", 3000, "Monthly", -20, 1, 4, "", "", "", "", 2750],
+    ["C-103", "Customer C", "", "Sponsored placement", 2000, "Monthly", 0, 15, 12, "", "", "", "", ""],
+    ["C-104", "Customer D", "", "CAD model library build", 9000, "Quarterly", -6, 1, 6, "", "", "", "", ""],
+    ["C-105", "Customer E", "", "CAD model library build", 6000, "Quarterly", -4, 1, 8, "", "", "", "", ""],
+    ["C-106", "Customer F", "payables@customer-f.example", "Sponsored placement", 2800, "Monthly", -11, 1, 0, "", "", "", "", 2800],
+    ["C-107", "Customer G", "", "Syndication", 1900, "Monthly", -8, 1, 4, "", "", "", "", 1900],
+    ["C-108", "Customer H", "", "Sponsored placement", 3400, "Monthly", -5, 1, 7, "", "Yes", "", "", 3400],
+    ["C-109", "Customer I", "", "Insights, annual licence", 18000, "Annual", -12, 1, 11, "", "", "", "", ""],
+    ["C-110", "Customer J", "payables@customer-j.example", "Sponsored placement", 5000, "Monthly", -15, 1, 9, "PO-88213", "Yes", 1240, 1.5, 6420],
+    ["C-111", "Customer J", "payables@customer-j.example", "Insights add-on", 1500, "Monthly", -3, 1, 9, "PO-88213", "Yes", "", "", 1500],
+    ["C-112", "Customer K", "", "Syndication", 1600, "Monthly", -9, 1, -1, "", "", "", "", 1600],
+    ["C-113", "Customer L", "", "Sponsored placement", 1200, "Monthly", -11, 1, 1, "", "", "", "", 1200]
+  ];
+  var CONTRACT_HEADERS = ["Contract ID", "Company name", "Billing email", "AP email", "Description", "Fee per bill", "Billing frequency", "Start date", "End date", "PO number", "PO required", "Usage units", "Unit price", "Terms", "Last month billed"];
+
+  function contractsCSV(period) {
+    var d = new Date(period), y = d.getUTCFullYear(), m = d.getUTCMonth();
+    var lines = [CONTRACT_HEADERS.join(",")];
+    CONTRACTS.forEach(function (c) {
+      var email = c[1] === "Customer G" ? "" : "billing@" + c[1].toLowerCase().replace(/\s+/g, "-") + ".example";
+      var start = iso(Date.UTC(y, m + c[6], c[7]));
+      var end = c[8] == null ? "" : iso(Date.UTC(y, m + c[8] + 1, 0));
+      lines.push([c[0], c[1], email, c[2], c[3], c[4].toFixed(2), c[5], start, end, c[9], c[10], c[11], c[12], "Net 30", c[13] === "" ? "" : c[13].toFixed(2)].map(q).join(","));
+    });
+    return lines.join("\n");
+  }
+
+  return { csv: csv, HEADERS: HEADERS, count: ROWS.length, contractsCSV: contractsCSV, CONTRACT_HEADERS: CONTRACT_HEADERS, contractCount: CONTRACTS.length };
 });

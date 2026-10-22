@@ -258,8 +258,10 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 .srcrow{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-top:20px;font-size:13px;color:var(--ink-2)}
 .srcrow b{color:var(--ink)}
 .srcrow .spacer{flex:1}
-.bridge{display:grid;grid-template-columns:minmax(0,1fr) 108px minmax(200px,1.5fr);gap:0;font-size:13px;align-items:center}
-.bridge>div{padding:9px 0;border-bottom:1px solid var(--line)}
+.bridge{font-size:13px}
+.brow{display:grid;grid-template-columns:minmax(0,1fr) 108px minmax(200px,1.5fr);align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.brow:last-child{border-bottom:none}
+.brow.total{border-top:1px solid var(--line-2)}
 .bridge .who{min-width:0}
 .bridge .who b{font-weight:500;color:var(--ink)}
 .bridge .who span{display:block;font-size:12px;color:var(--ink-3)}
@@ -267,12 +269,12 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 .bridge .amt.up{color:#2F6F4E}
 .bridge .amt.down{color:#9A4422}
 .bridge .tot{font-weight:700;color:var(--navy)}
-.bridge .track{height:10px;border-radius:5px;background:var(--surface);position:relative;overflow:hidden}
-.bridge .track i{position:absolute;top:0;bottom:0;border-radius:5px}
+.bridge .bar3{padding-left:16px}
+.bridge .track{height:10px;border-radius:3px;background:var(--surface);position:relative;overflow:hidden}
+.bridge .track i{position:absolute;top:0;bottom:0;border-radius:2px;min-width:3px}
 .bridge .track i.up{background:#7FB596}
 .bridge .track i.down{background:var(--b-61)}
 .bridge .track i.base{background:var(--navy)}
-.bridge .bar3{padding-left:16px}
 .badge{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--navy-soft);color:var(--navy)}
 .badge.new{background:#EAF4EE;color:#2F6F4E}
 .badge.final{background:var(--orange-soft);color:var(--orange-ink)}
@@ -336,9 +338,8 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   .stage small{display:none}
   .stage b{font-size:13px}
   .field input[type=month]{width:140px;padding:0 4px}
-  .bridge{grid-template-columns:minmax(0,1fr) auto}
-  .bridge .bar3{grid-column:1 / -1;border-bottom:1px solid var(--line);padding-top:0;padding-left:0}
-  .bridge .who,.bridge .amt{border-bottom:none;padding-bottom:4px}
+  .brow{grid-template-columns:minmax(0,1fr) auto;row-gap:6px}
+  .bridge .bar3{grid-column:1 / -1;padding-left:0}
   .lines .hide-sm{display:none}
 }
 </style>
@@ -409,7 +410,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 
     <section>
       <h2>Invoices</h2>
-      <p class="sub">One invoice per customer, a line for each contract. Issued on the last day of the month, due on the customer's terms. Open one to check the lines, edit the cover email or view the invoice.</p>
+      <p class="sub">One invoice per customer, a line for each contract. Issued on the last day of the month, due on the customer's terms. Open one to check the lines, edit the cover email or download the invoice as a PDF.</p>
       <div class="cards" id="invCards"></div>
       <p class="listed" id="notBilled"></p>
       <details class="rubric">
@@ -516,6 +517,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 
 <script src="ar.js?v=__V__"></script>
 <script src="billing.js?v=__V__"></script>
+<script src="invoice-pdf.js?v=__V__"></script>
 <script src="demo.js?v=__V__"></script>
 <script src="app.js?v=__V__"></script>
 </body>

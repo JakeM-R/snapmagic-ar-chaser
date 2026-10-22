@@ -143,3 +143,22 @@ test("cover email states amount, due date and PO, and passes the chaser draft ru
   assert.ok(!/!/.test(e.body));
   assert.ok(AR.wordCount(e.body) < 120);
 });
+
+test("invoice PDF: one page per invoice, real figures when not demo, masked in demo", () => {
+  const { jsPDF } = require("../site/vendor/jspdf-2.5.1.umd.min.js");
+  const INVPDF = require("../site/invoice-pdf.js");
+  const run = bill([
+    "C-1,Acme,ap@acme.example,Placement,2400,Monthly,2026-01-01,,PO-77,Yes,,,Net 30,",
+    "C-2,Beta,b@x.example,Placement,1000,Monthly,2026-01-01,,,,,,Net 30,"
+  ]);
+  const doc = INVPDF.build(jsPDF, run.invoices, run, false);
+  assert.strictEqual(doc.getNumberOfPages(), 2);
+  doc.setProperties({ creationDate: new Date(0) });
+  const raw = doc.output();
+  assert.match(raw, /INV-2610-001/);
+  assert.match(raw, /\$2,400/);
+  assert.match(raw, /PO-77/);
+  const demo = INVPDF.build(jsPDF, run.invoices, run, true).output();
+  assert.ok(!/\$2,400/.test(demo));
+  assert.match(demo, /Demo invoice/);
+});

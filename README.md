@@ -12,7 +12,7 @@ Upload a contracts CSV (one row per contract, from HubSpot or a Sheet), or use t
 2. **One invoice per customer,** a line per contract, numbered `INV-YYMM-001` onwards, issued on the last day of the month and due on the customer's terms.
 3. **Checked before sending:** no billing email, a PO required but missing, a monthly bill that moved 25% or more on last month for no contract reason, duplicate contracts, and bad rows. Contracts ending within 60 days get a renewal note.
 4. **Last month to this month:** a waterfall from last month's total to this one, with a reason for every change (new, ended, price change, usage, quarterly or annual bill). It reconciles to the cent.
-5. **Outputs:** a cover email per invoice (edit, copy or open in Gmail), a printable invoice (print or save as PDF), a CSV laid out for QuickBooks Online's invoice import, and **Send to aging run**, which adds the invoices to step 2 as open AR.
+5. **Outputs:** a cover email per invoice (edit, copy or open in Gmail), an invoice PDF per customer or all of them in one file (saved directly, no print dialog), a CSV laid out for QuickBooks Online's invoice import, and **Send to aging run**, which adds the invoices to step 2 as open AR.
 
 ## Step 2: Aging & chasers
 
@@ -32,6 +32,7 @@ A working prototype by Jake Makking-Robinson for SnapMagic's finance operations 
 |---|---|
 | `site/ar.js` | Core: CSV parser, column mapper, aging, rubric, templates, validator and Slack digest. Has no DOM or network code, so the same file runs in the browser, in Node tests and in Apps Script. |
 | `site/billing.js` | Billing core: contract column mapper, billing cycles, proration, usage, flags, the bridge, QuickBooks import CSV, cover emails and the hand-off to AR. Pure, like `ar.js`, and uses `ar.js` for parsing. |
+| `site/invoice-pdf.js`, `site/vendor/` | Invoice PDFs drawn with jsPDF 2.5.1 (MIT, vendored so the page has no CDN dependency; loaded only when someone downloads). |
 | `site/demo.js` | Demo data: 30 invoices and 13 contracts across 12 generic customers (A to L), with every edge case seeded. |
 | `site/app.js`, `site/index.html` | The page. |
 | `site/sheet-runner.js` | Apps Script glue. The page builds `Code.gs` by joining `ar.js` and this file, so the scheduled script uses the same code as the page. |

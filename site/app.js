@@ -13,7 +13,7 @@
     ticks: {}, sort: { aging: "overdue", drafts: "overdue" }, onlyYou: { aging: false, drafts: false }, tab: "demo", runDate: todayUTC(), settings: Object.assign({}, AR.DEFAULT_SETTINGS),
     result: null, drafts: {}, dirty: {}, open: {}, draftMode: "template", runId: 0,
     stage: "bill", billed: null,
-    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, period: null, run: null, emails: {}, dirty: {}, open: {}, pending: null }
+    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, dateOrder: "auto", period: null, run: null, emails: {}, dirty: {}, open: {}, pending: null }
   };
   state.bill.period = BILL.periodOf(todayUTC()).start;
 
@@ -40,11 +40,29 @@
   function kMoney(n) { return isDemo() ? "$xx" : AR.fmtK(n); }
   function maskDraft(d) { if (isDemo()) { d.subject = mask(d.subject); d.body = mask(d.body); } return d; }
 
+  // ---------- Date format ----------
+  // Slash dates are ambiguous (03/04/2026). The mapper shows what was detected and lets you override it.
+  var ORDER_NAMES = { mdy: "MM/DD/YYYY (US)", dmy: "DD/MM/YYYY" };
+  function dateSelect(id, rows, cols, current) {
+    var d = AR.dateOrderOf(rows, cols);
+    var auto = "Auto: " + (d.ambiguous ? "can't tell, reading as " + ORDER_NAMES.mdy : ORDER_NAMES[d.detected]);
+    return '<label>Slash dates<select id="' + id + '">' +
+      [["auto", auto], ["mdy", ORDER_NAMES.mdy], ["dmy", ORDER_NAMES.dmy]].map(function (o) {
+        return '<option value="' + o[0] + '"' + (o[0] === (current || "auto") ? " selected" : "") + ">" + esc(o[1]) + "</option>";
+      }).join("") + "</select></label>";
+  }
+  function dateCallout(d) {
+    if (!d || d.forced) return "";
+    if (d.mixed) return '<span class="callout you"><b>Mixed date formats</b>: some slash dates only work day first and others only month first. Those rows can\'t be read; set the date format when matching columns.</span>';
+    if (d.ambiguous) return '<span class="callout you"><b>Dates read as MM/DD</b>: nothing in the file shows which way round its slash dates are. If it\'s day first, upload it again and pick DD/MM.</span>';
+    return "";
+  }
+
   // ---------- Data loading ----------
 
   function loadDemo() {
     var p = AR.parseCSV(DEMO.csv(todayUTC()));
-    state.source = "demo"; state.fileName = "";
+    state.source = "demo"; state.fileName = ""; state.settings.dateOrder = "auto";
     state.headers = p.headers; state.rows = p.rows; state.map = AR.autoMap(p.headers);
     $("mapper").innerHTML = "";
     runAnalysis();
@@ -142,15 +160,15 @@
       '<div class="mapgrid">' + AR.FIELDS.map(function (f) {
         return "<label>" + esc(f.label) + (f.required ? ' <span class="req">required</span>' : "") +
           '<select data-k="' + f.key + '">' + opts(map[f.key]) + "</select></label>";
-      }).join("") + "</div>" +
+      }).join("") + dateSelect("dateOrder", state.pending.rows, [map.dueDate, map.issueDate, map.paidDate, map.lastContacted]) + "</div>" +
       '<div class="actions"><button class="btn primary" id="applyMap" type="button">Run aging</button>' +
       '<button class="btn ghost" id="cancelMap" type="button">Cancel</button><span class="err" id="mapErr"></span></div></div>';
     $("applyMap").onclick = function () {
       var m = {};
-      document.querySelectorAll("#mapper select").forEach(function (s) { if (s.value) m[s.dataset.k] = s.value; });
+      document.querySelectorAll("#mapper select").forEach(function (s) { if (s.value && s.dataset.k) m[s.dataset.k] = s.value; });
       var miss = AR.missingRequired(m);
       if (miss.length) { $("mapErr").textContent = "Still needed: " + miss.join(", "); return; }
-      state.source = "file"; state.fileName = state.pending.name;
+      state.source = "file"; state.fileName = state.pending.name; state.settings.dateOrder = $("dateOrder").value;
       state.headers = state.pending.headers; state.rows = state.pending.rows; state.map = m;
       $("mapper").innerHTML = "";
       runAnalysis();
@@ -177,10 +195,11 @@
   function applyTicks(res) {
     res.customers.forEach(function (c) {
       if (c.flaggedNeeds == null) { c.flaggedNeeds = c.needsYou; c.importedContact = c.lastContacted; }
-      var t = readTick(c);
-      c.actioned = !!t && c.tier >= 1;
+      // A tick lasts one run. An older one still counts as the last contact.
+      var t = readTick(c), td = AR.parseDate(t);
+      c.actioned = AR.tickActive(t, state.runDate) && c.tier >= 1;
       c.needsYou = c.flaggedNeeds && !c.actioned;
-      c.lastContacted = c.actioned ? Math.max(AR.parseDate(t), c.importedContact || 0) : c.importedContact;
+      c.lastContacted = td != null && td <= state.runDate ? Math.max(td, c.importedContact || 0) : c.importedContact;
     });
   }
   function contactText(c) {
@@ -265,6 +284,7 @@
     if (needs.length) co.push('<span class="callout you"><b>' + needs.length + " need action</b>: " + needs.map(function (c) { return esc(c.name); }).join(", ") + "</span>");
     co.push('<span class="callout"><b>' + chase + "</b> chaser draft" + (chase === 1 ? "" : "s") + " ready</span>");
     if (billing) co.push('<span class="callout"><b>' + billing + "</b> billing repl" + (billing === 1 ? "y" : "ies") + "</span>");
+    if (!isDemo() && dateCallout(res.dates)) co.push(dateCallout(res.dates));
     if (res.excludedTotal) co.push('<span class="callout"><b>' + res.excludedTotal + "</b> rows excluded</span>");
     if (state.billed) {
       var b = state.billed;
@@ -325,7 +345,7 @@
     var ex = res.excluded, parts = [];
     if (ex.paid) parts.push(ex.paid + " paid or void");
     if (ex.nonPositive) parts.push(ex.nonPositive + " zero or negative balance (incl. credit notes)");
-    if (ex.noDueDate) parts.push(ex.noDueDate + " missing a due date");
+    if (ex.noDueDate) parts.push(ex.noDueDate + " missing or unreadable due date");
     if (ex.duplicate) parts.push(ex.duplicate + " duplicate invoice #");
     if (ex.unreadable) parts.push(ex.unreadable + " unreadable");
     var nRows = allRows().length;
@@ -469,14 +489,14 @@
   function loadBillDemo() {
     var p = AR.parseCSV(DEMO.contractsCSV(state.bill.period));
     var b = state.bill;
-    b.source = "demo"; b.fileName = ""; b.headers = p.headers; b.rows = p.rows; b.map = BILL.autoMap(p.headers);
+    b.source = "demo"; b.fileName = ""; b.dateOrder = "auto"; b.headers = p.headers; b.rows = p.rows; b.map = BILL.autoMap(p.headers);
     $("billMapper").innerHTML = "";
     runBilling();
   }
 
   function runBilling() {
     var b = state.bill;
-    b.run = BILL.billingRun(b.rows, b.map, b.period);
+    b.run = BILL.billingRun(b.rows, b.map, b.period, { dateOrder: b.dateOrder });
     b.emails = {}; b.dirty = {};
     b.run.invoices.forEach(function (inv, i) {
       inv.id = i;
@@ -513,6 +533,7 @@
     if (run.bridge) co.push('<span class="callout"><b>' + signed(run.bridge.change) + "</b> on last month, " + run.bridge.items.length + " change" + (run.bridge.items.length === 1 ? "" : "s") + " explained</span>");
     var off = run.skipped.filter(function (s) { return !s.needsYou; }).length;
     if (off) co.push('<span class="callout"><b>' + off + "</b> contract" + (off === 1 ? "" : "s") + " not billed this month</span>");
+    if (!billDemo() && dateCallout(run.dates)) co.push(dateCallout(run.dates));
     if (run.unreadable) co.push('<span class="callout"><b>' + run.unreadable + "</b> unreadable row" + (run.unreadable === 1 ? "" : "s") + " (no customer or fee)</span>");
     $("billCallouts").innerHTML = co.join("");
 
@@ -597,9 +618,9 @@
     $("billRules").dataset.done = "1";
     $("billRules").innerHTML = "<ul>" +
       "<li><b>Who's billed:</b> contracts active in the month and on their cycle, billed in advance. Monthly bills every month, quarterly every third month from the start month, annual in the start month each year.</li>" +
-      "<li><b>Proration:</b> a monthly contract that starts or ends mid-month is billed for the days it covers.</li>" +
+      "<li><b>Proration:</b> a contract that starts or ends partway through its billing cycle (month, quarter or year) is billed for the days it covers.</li>" +
       "<li><b>Usage:</b> usage units × unit price, as its own line.</li>" +
-      "<li><b>One invoice per customer:</b> a line for each contract, numbered INV-YYMM-001 onwards, issued on the last day of the month and due on the customer's terms (Net 30 if blank).</li>" +
+      "<li><b>One invoice per customer:</b> a line for each contract (contracts on different payment terms get separate invoices, since each invoice has one due date), numbered INV-YYMM-001 onwards, issued on the last day of the month and due on the customer's terms (Net 30 if blank).</li>" +
       "<li><b>Checked before sending:</b> no billing email, a PO required but missing, a monthly bill up or down 25% or more on last month with no new, final or cycle reason, duplicate contracts, and rows with no start date or an unknown frequency.</li>" +
       "<li><b>Heads-up:</b> contracts ending within 60 days get a renewal note.</li>" +
       "<li><b>Bridge:</b> last month's total to this month's, with a reason for every change: new, ended, price change, usage, or a quarterly or annual bill.</li>" +
@@ -682,16 +703,16 @@
       '<div class="mapgrid">' + BILL.FIELDS.map(function (f) {
         return "<label>" + esc(f.label) + (f.required ? ' <span class="req">required</span>' : "") +
           '<select data-bk="' + f.key + '">' + opts(map[f.key]) + "</select></label>";
-      }).join("") + "</div>" +
+      }).join("") + dateSelect("bDateOrder", state.bill.pending.rows, [map.start, map.end]) + "</div>" +
       '<div class="actions"><button class="btn primary" id="bApply" type="button">Run billing</button>' +
       '<button class="btn ghost" id="bCancel" type="button">Cancel</button><span class="err" id="bErr"></span></div></div>';
     $("bApply").onclick = function () {
       var m = {};
-      document.querySelectorAll("#billMapper select").forEach(function (s) { if (s.value) m[s.dataset.bk] = s.value; });
+      document.querySelectorAll("#billMapper select").forEach(function (s) { if (s.value && s.dataset.bk) m[s.dataset.bk] = s.value; });
       var miss = BILL.missingRequired(m);
       if (miss.length) { $("bErr").textContent = "Still needed: " + miss.join(", "); return; }
       var b = state.bill, pd = b.pending;
-      b.source = "file"; b.fileName = pd.name; b.headers = pd.headers; b.rows = pd.rows; b.map = m;
+      b.source = "file"; b.fileName = pd.name; b.dateOrder = $("bDateOrder").value; b.headers = pd.headers; b.rows = pd.rows; b.map = m;
       $("billMapper").innerHTML = "";
       runBilling();
     };

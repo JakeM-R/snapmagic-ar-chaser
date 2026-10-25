@@ -248,3 +248,44 @@ test("last contacted takes the latest date per customer and ignores future dates
   const c = AR.analyze(p.rows, AR.autoMap(p.headers), RUN).customers[0];
   assert.strictEqual(c.lastContacted, RUN - 4 * DAY);
 });
+
+test("day-first exports are detected, impossible dates are rejected, and ambiguous files are reported", () => {
+  // 25/09/2026 can only be day first, so the whole file is read that way.
+  const dmyHead = "Invoice number,Company name,Contact email,Amount,Amount paid,Due date,Status";
+  const p = AR.parseCSV([dmyHead, "INV-1,Customer A,a@x.example,1000,0,25/09/2026,Open", "INV-2,Customer A,a@x.example,500,0,06/10/2026,Open"].join("\n"));
+  const res = AR.analyze(p.rows, AR.autoMap(p.headers), RUN);
+  assert.strictEqual(res.dates.order, "dmy");
+  const due = only(res).invoices.map((i) => AR.isoDate(i.dueDate)).sort();
+  assert.deepStrictEqual(due, ["2026-09-25", "2026-10-06"]);
+
+  assert.strictEqual(AR.parseDate("2026-02-30"), null);
+  assert.strictEqual(AR.parseDate("13/13/2026"), null);
+  assert.strictEqual(AR.parseDate("25/10/2026"), null); // month 25 when read US-style
+  assert.strictEqual(AR.isoDate(AR.parseDate("25/10/2026", "dmy")), "2026-10-25");
+
+  const amb = AR.parseCSV([dmyHead, "INV-1,Customer A,a@x.example,1000,0,03/04/2026,Open"].join("\n"));
+  const ambRes = AR.analyze(amb.rows, AR.autoMap(amb.headers), RUN);
+  assert.strictEqual(ambRes.dates.ambiguous, true);
+  assert.strictEqual(AR.isoDate(only(ambRes).invoices[0].dueDate), "2026-03-04");
+  const forced = AR.analyze(amb.rows, AR.autoMap(amb.headers), RUN, { dateOrder: "dmy" });
+  assert.strictEqual(AR.isoDate(only(forced).invoices[0].dueDate), "2026-04-03");
+  assert.strictEqual(forced.dates.ambiguous, false);
+});
+
+test("billing-run invoice numbers (INV-YYMM-NNN) pass the validator; invented ones still fail", () => {
+  const res = run([row("INV-2610-001", "Customer A", "2400", 20), row("INV-2610-002", "Customer A", "1000", 5)]);
+  const c = only(res);
+  rulesOk(draftOf(res), c);
+  const sign = "\n\nThanks,\n" + SETTINGS.senderName + "\n" + SETTINGS.senderRole;
+  const probs = AR.validateDraft({ subject: "s", body: "Hello,\n\nINV-2610-001 and INV-2610-009 are open." + sign }, c, SETTINGS);
+  assert.deepStrictEqual(probs, ["Invoice # not in input: INV-2610-009"]);
+});
+
+test("an Actioned tick lasts one run: it lapses at the next fortnightly run", () => {
+  const ticked = AR.isoDate(RUN);
+  assert.strictEqual(AR.tickActive(ticked, RUN), true);
+  assert.strictEqual(AR.tickActive(ticked, RUN + 13 * DAY), true);
+  assert.strictEqual(AR.tickActive(ticked, RUN + 14 * DAY), false); // next run
+  assert.strictEqual(AR.tickActive(ticked, RUN - DAY), false); // run date moved before the tick
+  assert.strictEqual(AR.tickActive(null, RUN), false);
+});

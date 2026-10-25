@@ -8,19 +8,19 @@ The page runs in two steps. **Month-end billing** turns a contracts file into th
 
 Upload a contracts CSV (one row per contract, from HubSpot or a Sheet), or use the demo contracts, and pick the month:
 
-1. **Who to bill:** active contracts on their cycle. Monthly bills every month, quarterly every third month from the start month, annual in the start month. Mid-month starts and ends are prorated by day. Usage units × unit price become their own line.
-2. **One invoice per customer,** a line per contract, numbered `INV-YYMM-001` onwards, issued on the last day of the month and due on the customer's terms.
+1. **Who to bill:** active contracts on their cycle. Monthly bills every month, quarterly every third month from the start month, annual in the start month. A contract that starts or ends partway through its month, quarter or year is prorated by day. Usage units × unit price become their own line.
+2. **One invoice per customer,** a line per contract (split when a customer's contracts have different payment terms), numbered `INV-YYMM-001` onwards, issued on the last day of the month and due on the customer's terms.
 3. **Checked before sending:** no billing email, a PO required but missing, a monthly bill that moved 25% or more on last month for no contract reason, duplicate contracts, and bad rows. Contracts ending within 60 days get a renewal note.
 4. **Last month to this month:** a waterfall from last month's total to this one, with a reason for every change (new, ended, price change, usage, quarterly or annual bill). It reconciles to the cent.
 5. **Outputs:** a cover email per invoice (edit, copy or open in Gmail), an invoice PDF per customer or all of them in one file (saved directly, no print dialog), a CSV laid out for QuickBooks Online's invoice import, and **Send to aging run**, which adds the invoices to step 2 as open AR.
 
 ## Step 2: Aging & chasers
 
-A working prototype by Jake Makking-Robinson for SnapMagic's finance operations remit: "run aging reports every two weeks, answer billing questions." Upload a HubSpot or QuickBooks invoice export (or use the demo data) and the page gives you:
+A working prototype by Jake Makking-Robinson for SnapMagic's finance operations remit: "run aging reports every two weeks, answer billing questions." Upload a HubSpot or QuickBooks invoice export (or use the demo data) and the page gives you the list below. Slash dates are read as US (MM/DD) unless the file shows it is day first; the column matcher says which it detected and lets you override it.
 
 1. **A to-do headline:** customers to chase, total outstanding and the amount over 30 days, with the run date and the next run 14 days out.
 2. **Aging by customer:** current, 1–30, 31–60, 61–90 and 90+ buckets, sorted by dollars at risk, with a count of excluded rows (paid, zero or negative balance, missing due date, duplicate invoice #).
-3. **Chaser drafts:** one email per customer covering every open invoice, tiered by the oldest overdue invoice. Each draft can be edited, copied or opened in Gmail. Tier 5, accounts over 20% of AR and records with a missing email are flagged "Needs action." Each overdue customer shows when they were last contacted (optional "Last contacted" column), and an Actioned tick clears "Needs action" and logs today as the last contact. Ticks are kept in your browser only.
+3. **Chaser drafts:** one email per customer covering every open invoice, tiered by the oldest overdue invoice. Each draft can be edited, copied or opened in Gmail. Tier 5, accounts over 20% of AR and records with a missing email are flagged "Needs action." Each overdue customer shows when they were last contacted (optional "Last contacted" column), and an Actioned tick clears "Needs action" and logs today as the last contact. A tick lasts for that run only, so a customer still flagged at the next fortnightly run comes back as "Needs action." Ticks are kept in your browser only.
 4. **Slack summary:** a three-line digest for the CEO.
 5. **Make it run itself:** a Google Apps Script that applies the same aging and rubric to a Sheet every other Monday, saves Gmail drafts and posts the digest to Slack. Setup takes five steps.
 

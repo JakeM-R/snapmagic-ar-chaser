@@ -98,6 +98,7 @@
     var g = function (r, k) { return map[k] ? r[map[k]] : ""; };
     var ym = P.year * 12 + P.month;
     var contracts = [], skipped = [], unreadable = 0, seen = {};
+    var dates = AR.dateOrderOf(rows, [map.start, map.end], settings.dateOrder);
 
     rows.forEach(function (r) {
       var name = String(g(r, "customer") || "").trim();
@@ -112,11 +113,12 @@
       if (seen[key]) { skipped.push(Object.assign(base, { reason: "Duplicate of " + (id || desc) + " in the file, billed once", kind: "duplicate", needsYou: true, last: 0 })); return; }
       seen[key] = true;
 
-      var start = AR.parseDate(g(r, "start"));
-      var end = AR.parseDate(g(r, "end"));
+      var start = AR.parseDate(g(r, "start"), dates.order);
+      var end = AR.parseDate(g(r, "end"), dates.order);
       var freq = freqOf(g(r, "frequency"));
-      if (start == null) { skipped.push(Object.assign(base, { reason: "No start date: fix the record", kind: "data", needsYou: true })); return; }
+      if (start == null) { skipped.push(Object.assign(base, { reason: (String(g(r, "start") || "").trim() ? "Start date “" + String(g(r, "start")).trim() + "” can't be read" : "No start date") + ": fix the record", kind: "data", needsYou: true })); return; }
       if (!freq) { skipped.push(Object.assign(base, { reason: "Billing frequency “" + g(r, "frequency") + "” not recognised: use monthly, quarterly or annual", kind: "data", needsYou: true })); return; }
+      if (end == null && String(g(r, "end") || "").trim()) { skipped.push(Object.assign(base, { reason: "End date “" + String(g(r, "end")).trim() + "” can't be read: fix the record", kind: "data", needsYou: true })); return; }
       if (end != null && end < start) { skipped.push(Object.assign(base, { reason: "End date is before the start date: fix the record", kind: "data", needsYou: true })); return; }
       if (start > P.end) { skipped.push(Object.assign(base, { reason: "Starts " + AR.fmtDate(start) + ", nothing to bill yet", kind: "future" })); return; }
       if (end != null && end < P.start) { skipped.push(Object.assign(base, { reason: "Ended " + AR.fmtDate(end), kind: "ended" })); return; }
@@ -135,22 +137,23 @@
         return;
       }
 
+      // An on-cycle bill covers the whole cycle starting this month (one, three or twelve months).
+      // A contract that starts or ends inside that cycle pays only for the days it covers.
+      var cycleEnd = onCycle ? Date.UTC(P.year, P.month + freq.months, 0) : P.end;
       var lines = [], flags = [], notes = [];
-      var isNew = start >= P.start, isFinal = end != null && end <= P.end;
+      var isNew = start >= P.start, isFinal = end != null && end <= cycleEnd;
       var amount = 0;
       if (onCycle) {
         amount = fee;
-        var covered = null;
-        if (freq.months === 1 && (isNew || isFinal)) {
-          var from = Math.max(start, P.start), to = Math.min(end == null ? P.end : end, P.end);
-          covered = Math.round((to - from) / DAY) + 1;
-          if (covered < P.days) amount = r2(fee * covered / P.days);
-          else covered = null;
-        }
+        var cycleDays = Math.round((cycleEnd - P.start) / DAY) + 1;
+        var from = Math.max(start, P.start), to = Math.min(end == null ? cycleEnd : end, cycleEnd);
+        var covered = Math.round((to - from) / DAY) + 1;
+        if (covered < cycleDays) amount = r2(fee * covered / cycleDays);
+        else covered = null;
         var span = freq.months === 1 ? P.label
           : shortMonth(P.year, P.month) + " – " + shortMonth(P.year, P.month + freq.months - 1);
-        lines.push({ description: desc + " · " + span + (covered ? " (" + covered + " of " + P.days + " days)" : ""), qty: 1, rate: amount, amount: amount });
-        if (covered) notes.push("Prorated: " + covered + " of " + P.days + " days");
+        lines.push({ description: desc + " · " + span + (covered ? " (" + covered + " of " + cycleDays + " days)" : ""), qty: 1, rate: amount, amount: amount });
+        if (covered) notes.push("Prorated: " + covered + " of " + cycleDays + " days");
       }
       if (usage) lines.push({ description: "Usage · " + P.label + " · " + units.toLocaleString("en-US") + " units", qty: units, rate: price, amount: usage });
 
@@ -176,10 +179,12 @@
       });
     });
 
-    // One invoice per customer, a line for each contract.
-    var byCust = {};
+    // One invoice per customer and payment terms, a line for each contract. Contracts on
+    // different terms can't share an invoice, because an invoice has one due date.
+    var byCust = {}, termsSeen = {};
     contracts.forEach(function (c) {
-      var k = c.customer.toLowerCase();
+      var ck = c.customer.toLowerCase(), k = ck + "|" + termsDays(c.terms);
+      (termsSeen[ck] = termsSeen[ck] || {})[termsDays(c.terms)] = c.terms;
       var inv = byCust[k] || (byCust[k] = { customer: c.customer, email: "", ccEmail: "", terms: c.terms, pos: [], lines: [], flags: [], notes: [], contracts: [] });
       if (!inv.email && c.email) inv.email = c.email;
       if (!inv.ccEmail && c.ccEmail) inv.ccEmail = c.ccEmail;
@@ -190,7 +195,11 @@
       inv.contracts.push(c);
     });
     var invoices = Object.keys(byCust).map(function (k) { return byCust[k]; })
-      .sort(function (a, b) { return a.customer.localeCompare(b.customer); });
+      .sort(function (a, b) { return a.customer.localeCompare(b.customer) || termsDays(a.terms) - termsDays(b.terms); });
+    invoices.forEach(function (inv) {
+      var t = termsSeen[inv.customer.toLowerCase()], names = Object.keys(t).sort(function (a, b) { return a - b; }).map(function (d) { return t[d]; });
+      if (names.length > 1) inv.notes.push("Split by payment terms: this customer has contracts on " + names.join(" and ") + ", so each gets its own invoice and due date");
+    });
 
     var yymm = String(P.year).slice(2) + (P.month < 9 ? "0" : "") + (P.month + 1);
     invoices.forEach(function (inv, i) {
@@ -205,7 +214,7 @@
 
     var total = r2(invoices.reduce(function (s, i) { return s + i.total; }, 0));
     return {
-      period: P, invoices: invoices, skipped: skipped, unreadable: unreadable,
+      period: P, invoices: invoices, skipped: skipped, unreadable: unreadable, dates: dates,
       total: total, bridge: bridgeOf(contracts, skipped, map.lastBilled),
       needsYou: invoices.filter(function (i) { return i.needsYou; }).length + skipped.filter(function (s) { return s.needsYou; }).length
     };

@@ -162,3 +162,40 @@ test("invoice PDF: one page per invoice, real figures when not demo, masked in d
   assert.ok(!/\$2,400/.test(demo));
   assert.match(demo, /Demo invoice/);
 });
+
+test("quarterly and annual bills are prorated when the contract starts or ends inside the cycle", () => {
+  const run = bill([
+    "Q-1,Ends early,a@x.example,Build,9200,Quarterly,2026-10-01,2026-11-15,,,,,Net 30,",
+    "A-1,Starts late,b@x.example,Licence,36500,Annual,2026-10-20,,,,,,Net 30,"
+  ]);
+  const q = inv(run, "Ends early");
+  assert.strictEqual(q.total, 4600); // Oct 1 to Nov 15: 46 of 92 days
+  assert.match(q.lines[0].description, /46 of 92 days/);
+  assert.ok(q.notes.some((n) => /final invoice/.test(n)));
+  const a = inv(run, "Starts late");
+  assert.strictEqual(a.total, 34600); // Oct 20 2026 to Sep 30 2027: 346 of 365 days
+  assert.match(a.lines[0].description, /346 of 365 days/);
+});
+
+test("one customer's contracts on different terms get separate invoices with their own due dates", () => {
+  const run = bill([
+    "C-1,Acme,ap@acme.example,Placement,1000,Monthly,2026-01-01,,,,,,Net 15,",
+    "C-2,Acme,ap@acme.example,Insights,500,Monthly,2026-01-01,,,,,,Net 60,"
+  ]);
+  const acme = run.invoices.filter((i) => i.customer === "Acme");
+  assert.strictEqual(acme.length, 2);
+  assert.deepStrictEqual(acme.map((i) => AR.isoDate(i.dueDate)), ["2026-11-15", "2026-12-30"]);
+  assert.deepStrictEqual(acme.map((i) => i.number), ["INV-2610-001", "INV-2610-002"]);
+  assert.ok(acme.every((i) => i.notes.some((n) => /Split by payment terms/.test(n))));
+  assert.strictEqual(run.total, 1500);
+});
+
+test("day-first contract dates are read day first, and an unreadable date is skipped, not guessed", () => {
+  const run = bill([
+    "C-1,Acme,ap@acme.example,Placement,3100,Monthly,15/10/2026,,,,,,Net 30,",
+    "C-2,Bad,b@x.example,Placement,1000,Monthly,31/02/2026,,,,,,Net 30,"
+  ]);
+  assert.strictEqual(run.dates.order, "dmy");
+  assert.strictEqual(inv(run, "Acme").total, 1700); // 17 of 31 days
+  assert.ok(run.skipped.some((s) => s.customer === "Bad" && /can't be read/.test(s.reason)));
+});

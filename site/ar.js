@@ -9,6 +9,7 @@
   "use strict";
 
   var DAY = 86400000;
+  var CYCLE_DAYS = 14; // the aging run repeats every two weeks
 
   // ---------- CSV ----------
 
@@ -96,27 +97,56 @@
 
   var MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 
+  // UTC midnight for a real calendar date, or null. 2026-02-30 and month 13 are rejected
+  // rather than rolled into the next month.
+  function ymd(y, mo, d) {
+    var t = Date.UTC(y, mo, d), dt = new Date(t);
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo && dt.getUTCDate() === d ? t : null;
+  }
+
+  var SLASH = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/;
+
   // Returns a UTC-midnight timestamp, or null. Slash dates are read as US (MM/DD/YYYY),
-  // which is what US HubSpot and QuickBooks exports produce.
-  function parseDate(v) {
+  // which is what US HubSpot and QuickBooks exports produce, unless order is "dmy".
+  function parseDate(v, order) {
     if (v == null) return null;
     if (v instanceof Date) return isNaN(v) ? null : Date.UTC(v.getFullYear(), v.getMonth(), v.getDate());
     var s = String(v).trim(), m;
     if (!s) return null;
-    if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return Date.UTC(+m[1], +m[2] - 1, +m[3]);
-    if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) {
+    if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return ymd(+m[1], +m[2] - 1, +m[3]);
+    if ((m = s.match(SLASH))) {
       var y = +m[3]; if (y < 100) y += 2000;
-      return Date.UTC(y, +m[1] - 1, +m[2]);
+      return order === "dmy" ? ymd(y, +m[2] - 1, +m[1]) : ymd(y, +m[1] - 1, +m[2]);
     }
     if ((m = s.match(/^(\d{1,2})[\s\-]([A-Za-z]{3})[A-Za-z]*[\s\-,]+(\d{4})$/))) {
       var mo = MONTHS[m[2].toLowerCase()]; if (mo == null) return null;
-      return Date.UTC(+m[3], mo, +m[1]);
+      return ymd(+m[3], mo, +m[1]);
     }
     if ((m = s.match(/^([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/))) {
       var mo2 = MONTHS[m[1].toLowerCase()]; if (mo2 == null) return null;
-      return Date.UTC(+m[3], mo2, +m[2]);
+      return ymd(+m[3], mo2, +m[2]);
     }
     return null;
+  }
+
+  /* Works out whether slash dates in these columns are month first (US) or day first.
+   * A first number over 12 means day first; a second number over 12 means month first.
+   * With no such date the file is ambiguous and US order is assumed, so the page can say so.
+   * An explicit "mdy" or "dmy" wins. */
+  function dateOrderOf(rows, cols, forced) {
+    var dmy = 0, mdy = 0, slash = 0;
+    rows.forEach(function (r) {
+      cols.forEach(function (col) {
+        var m = col && String(r[col] == null ? "" : r[col]).trim().match(SLASH);
+        if (!m) return;
+        slash++;
+        if (+m[1] > 12) dmy++;
+        if (+m[2] > 12) mdy++;
+      });
+    });
+    var detected = dmy && !mdy ? "dmy" : "mdy";
+    if (forced === "mdy" || forced === "dmy") return { order: forced, ambiguous: false, mixed: false, forced: true, detected: detected };
+    return { order: detected, ambiguous: slash > 0 && !dmy && !mdy, mixed: dmy > 0 && mdy > 0, forced: false, detected: detected };
   }
 
   function isoDate(t) { return new Date(t).toISOString().slice(0, 10); }
@@ -200,6 +230,8 @@
     settings = Object.assign({}, DEFAULT_SETTINGS, settings || {});
     var run = typeof runDate === "number" ? runDate : parseDate(runDate);
     var g = function (r, k) { return map[k] ? r[map[k]] : ""; };
+    var dates = dateOrderOf(rows, [map.dueDate, map.issueDate, map.paidDate, map.lastContacted], settings.dateOrder);
+    var pd = function (v) { return parseDate(v, dates.order); };
     var excluded = { paid: 0, nonPositive: 0, noDueDate: 0, duplicate: 0, unreadable: 0 };
     var seen = {}, customers = {}, history = {};
 
@@ -218,8 +250,8 @@
       var balance = bal != null ? bal : (amount != null ? Math.round((amount - paid) * 100) / 100 : null);
       if (bal != null && amount != null && !map.paid) paid = Math.round((amount - bal) * 100) / 100;
       var status = g(r, "status");
-      var due = parseDate(g(r, "dueDate"));
-      var paidDate = parseDate(g(r, "paidDate"));
+      var due = pd(g(r, "dueDate"));
+      var paidDate = pd(g(r, "paidDate"));
 
       if (!inv || !name || amount == null) { excluded.unreadable++; return; }
 
@@ -245,12 +277,12 @@
       if (!c.email && g(r, "email")) c.email = String(g(r, "email")).trim();
       if (!c.ccEmail && g(r, "ccEmail")) c.ccEmail = String(g(r, "ccEmail")).trim();
       if (!c.terms && g(r, "terms")) c.terms = String(g(r, "terms")).trim();
-      var lc = parseDate(g(r, "lastContacted"));
+      var lc = pd(g(r, "lastContacted"));
       if (lc != null && lc <= run && (c.lastContacted == null || lc > c.lastContacted)) c.lastContacted = lc;
       var days = Math.round((run - due) / DAY);
       c.invoices.push({
         invoice: inv, amount: amount, paid: paid > 0 ? paid : 0, balance: balance,
-        issueDate: parseDate(g(r, "issueDate")), dueDate: due, daysOverdue: days,
+        issueDate: pd(g(r, "issueDate")), dueDate: due, daysOverdue: days,
         bucket: bucketOf(days), disputed: isDisputed(status), status: status
       });
     });
@@ -312,13 +344,14 @@
     var over30 = Math.round(list.reduce(function (s, c) { return s + c.over30; }, 0) * 100) / 100;
     return {
       runDate: run,
-      nextRun: run + 14 * DAY,
+      nextRun: run + CYCLE_DAYS * DAY,
       customers: list,
       excluded: excluded,
       excludedTotal: excluded.paid + excluded.nonPositive + excluded.noDueDate + excluded.duplicate + excluded.unreadable,
       totalAR: totalAR,
       over30: over30,
       toChase: toChase.length,
+      dates: dates,
       settings: settings
     };
   }
@@ -462,10 +495,14 @@
     c.invoices.forEach(function (i) { days[i.daysOverdue] = true; });
     var dre = /(\d+)\s+days?\b/gi;
     while ((m = dre.exec(text))) if (!days[+m[1]]) problems.push("Day count not in input: " + m[0]);
-    var invIds = {};
-    c.invoices.forEach(function (i) { invIds[i.invoice.toLowerCase()] = true; });
-    var ire = /\b[A-Z]{2,5}-?\d{3,}\b/g;
-    while ((m = ire.exec(text))) if (!invIds[m[0].toLowerCase()]) problems.push("Invoice # not in input: " + m[0]);
+    // Blank out the real invoice numbers first, whatever their shape (INV-2610-001 included),
+    // so only invented ones are left for the pattern to find.
+    var rest = text;
+    c.invoices.map(function (i) { return i.invoice; }).sort(function (a, b) { return b.length - a.length; }).forEach(function (id) {
+      rest = rest.replace(new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+    });
+    var ire = /\b[A-Z]{2,5}-?\d{3,}(?:-\d+)*\b/g;
+    while ((m = ire.exec(rest))) problems.push("Invoice # not in input: " + m[0]);
     var signer = c.tier === 4 ? settings && settings.founderName : settings && settings.senderName;
     if (signer && d.body.indexOf(signer) === -1) problems.push("Missing sign-off");
     return problems;
@@ -481,6 +518,15 @@
     var problems = validateDraft(cand, c, settings);
     if (problems.length) { tpl.rejected = problems; return tpl; }
     return cand;
+  }
+
+  // ---------- Actioned ticks ----------
+
+  /* A tick counts for the run it was made in: on or before the run date and less than one
+   * 14-day cycle old. After that the customer comes back as Needs action if still flagged. */
+  function tickActive(tickDate, runDate) {
+    var t = parseDate(tickDate);
+    return t != null && t <= runDate && runDate - t < CYCLE_DAYS * DAY;
   }
 
   // ---------- Digest ----------
@@ -500,7 +546,7 @@
 
   return {
     parseCSV: parseCSV, FIELDS: FIELDS, autoMap: autoMap, missingRequired: missingRequired,
-    parseMoney: parseMoney, parseDate: parseDate, isoDate: isoDate, fmtDate: fmtDate, fmtShortDate: fmtShortDate, fmtDay: fmtDay,
+    parseMoney: parseMoney, parseDate: parseDate, dateOrderOf: dateOrderOf, tickActive: tickActive, isoDate: isoDate, fmtDate: fmtDate, fmtShortDate: fmtShortDate, fmtDay: fmtDay,
     fmtMoney: fmtMoney, fmtK: fmtK, addBusinessDays: addBusinessDays,
     BUCKETS: BUCKETS, bucketOf: bucketOf, tierOf: tierOf, TIER_NAMES: TIER_NAMES, RUBRIC: RUBRIC, DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     analyze: analyze, templateDraft: templateDraft, modelSummary: modelSummary,

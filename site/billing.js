@@ -251,14 +251,19 @@
   function q(v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
   function usDate(t) { var d = new Date(t); return (d.getUTCMonth() + 1) + "/" + d.getUTCDate() + "/" + d.getUTCFullYear(); }
 
-  /* One row per invoice line, laid out for QuickBooks Online's invoice import. */
-  function importCSV(run) {
+  // Demo downloads keep their layout but hide the amounts, as the page does.
+  var MASK = "xx";
+
+  /* One row per invoice line, laid out for QuickBooks Online's invoice import.
+   * opts.mask replaces the rate and amount with "xx" (demo data). */
+  function importCSV(run, opts) {
+    var mask = opts && opts.mask;
     var head = ["InvoiceNo", "Customer", "InvoiceDate", "DueDate", "Terms", "Memo", "ItemDescription", "ItemQuantity", "ItemRate", "ItemAmount"];
     var out = [head.join(",")];
     run.invoices.forEach(function (inv) {
       inv.lines.forEach(function (l) {
         out.push([inv.number, inv.customer, usDate(inv.issueDate), usDate(inv.dueDate), inv.terms, inv.pos.length ? "PO " + inv.pos.join(", ") : "",
-          l.description, l.qty, l.rate.toFixed(2), l.amount.toFixed(2)].map(q).join(","));
+          l.description, l.qty, mask ? MASK : l.rate.toFixed(2), mask ? MASK : l.amount.toFixed(2)].map(q).join(","));
       });
     });
     return out.join("\n") + "\n";
@@ -274,11 +279,11 @@
 
   var AR_HEADERS = { invoice: "Invoice number", customer: "Company name", email: "Contact email", ccEmail: "AP email", amount: "Amount", paid: "Amount paid", issueDate: "Invoice date", dueDate: "Due date", status: "Status", terms: "Terms" };
 
-  /* Same records as a CSV in the AR chaser's own template layout. */
-  function arCSV(run) {
-    var keys = Object.keys(AR_HEADERS);
+  /* Same records as a CSV in the AR chaser's own template layout. opts.mask hides amounts. */
+  function arCSV(run, opts) {
+    var keys = Object.keys(AR_HEADERS), mask = opts && opts.mask;
     return [keys.map(function (k) { return AR_HEADERS[k]; }).join(",")].concat(arRecords(run).map(function (r) {
-      return keys.map(function (k) { return q(r[k]); }).join(",");
+      return keys.map(function (k) { return q(mask && (k === "amount" || k === "paid") ? MASK : r[k]); }).join(",");
     })).join("\n") + "\n";
   }
 

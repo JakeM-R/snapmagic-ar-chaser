@@ -24,7 +24,7 @@ A working prototype by Jake Makking-Robinson for SnapMagic's finance operations 
 4. **Slack summary:** a three-line digest for the CEO.
 5. **Make it run itself:** a Google Apps Script that applies the same aging and rubric to a Sheet every other Monday, saves Gmail drafts and posts the digest to Slack. Setup takes five steps.
 
-**Demo data is fictional** and labelled on the page and on every row. The customers are generic (Customer A to L), and in demo mode every dollar figure on the page shows as `$xx`. The bars keep their proportions, and an uploaded export shows real amounts. The dates are generated relative to today, so the demo looks the same whenever it's opened.
+**Demo data is fictional** and labelled on the page and on every row. The customers are generic (Customer A to L), and in demo mode every dollar figure on the page shows as `$xx`, and the demo CSV downloads show amounts as `xx`. The bars keep their proportions, and an uploaded export shows real amounts. The dates are generated relative to today, so the demo looks the same whenever it's opened.
 
 ## Layout
 

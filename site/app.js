@@ -11,9 +11,9 @@
   var state = {
     source: "demo", fileName: "", rows: [], headers: [], map: {},
     ticks: {}, sort: { aging: "overdue", drafts: "overdue" }, onlyYou: { aging: false, drafts: false }, tab: "demo", runDate: todayUTC(), settings: Object.assign({}, AR.DEFAULT_SETTINGS),
-    result: null, drafts: {}, dirty: {}, open: {}, draftMode: "template", runId: 0,
+    result: null, drafts: {}, dirty: {}, edits: {}, open: {}, draftMode: "template", runId: 0,
     stage: "bill", billed: null,
-    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, dateOrder: "auto", period: null, run: null, emails: {}, dirty: {}, open: {}, pending: null }
+    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, dateOrder: "auto", period: null, run: null, emails: {}, dirty: {}, edits: {}, open: {}, pending: null }
   };
   state.bill.period = BILL.periodOf(todayUTC()).start;
 
@@ -208,11 +208,20 @@
     return "Last contacted " + AR.fmtShortDate(c.lastContacted) + (d === 0 ? " (today)" : " (" + d + (d === 1 ? " day" : " days") + " ago)");
   }
 
+  // Edits are kept per file and customer, so a re-run (new run date, sign-off, billed invoices)
+  // rebuilds the templates without throwing away what you typed.
+  function editKey(c) { return (isDemo() ? "demo" : state.fileName) + "|" + c.name.toLowerCase(); }
+
   function runAnalysis() {
     state.result = AR.analyze(allRows(), state.map, state.runDate, state.settings);
     applyTicks(state.result);
     state.drafts = {}; state.dirty = {}; state.draftMode = "template";
-    state.result.customers.forEach(function (c, i) { c.id = i; state.drafts[i] = maskDraft(AR.templateDraft(c, state.runDate, state.settings)); });
+    state.result.customers.forEach(function (c, i) {
+      c.id = i;
+      var d = maskDraft(AR.templateDraft(c, state.runDate, state.settings)), e = state.edits[editKey(c)];
+      if (e && d.body) { d.subject = e.subject; d.body = e.body; d.editedFor = e.runDate; state.dirty[i] = true; }
+      state.drafts[i] = d;
+    });
     render();
     requestModelDrafts();
   }
@@ -368,6 +377,7 @@
       var facts = money(c.balance) + " open · " + c.invoices.length + " invoice" + (c.invoices.length === 1 ? "" : "s") + " · " + c.oldestDays + " days overdue";
       var flags = c.flags.map(function (f) { return "<li>" + esc(mask(f)) + "</li>"; });
       if (c.toneNote && c.action === "chase") flags.push('<li class="tone">' + esc(c.toneNote) + "</li>");
+      if (state.dirty[c.id] && d.editedFor !== state.runDate) flags.push("<li>You edited this draft for the " + esc(AR.fmtDate(d.editedFor)) + " run. Check its figures and dates before sending.</li>");
       if (d.rejected) flags.push("<li>AI draft failed a rule check (" + esc(mask(d.rejected[0])) + "), template used</li>");
       var why = c.tier === 5 ? "Over 90 days. This needs a call from you, not another email."
         : !c.email ? "No contact email in the export. Fix the record and re-run."
@@ -392,9 +402,10 @@
           '<textarea data-id="' + c.id + '" aria-label="Email body" spellcheck="true">' + esc(d.body) + "</textarea>" +
           '<div class="ft"><button class="btn primary" type="button" data-copy="' + c.id + '">Copy</button>' +
           '<a class="btn" target="_blank" rel="noopener" data-gmail="' + c.id + '" href="' + gmailUrl(d) + '">Open in Gmail</a>' +
+          (state.dirty[c.id] ? '<button class="btn ghost" type="button" data-revert="' + c.id + '">Discard edits</button>' : "") +
           '<span class="src">' + (d.source === "claude" ? "Drafted by AI" : "Template") + (state.dirty[c.id] ? " · edited" : "") + "</span></div></div>";
       }
-      return '<details class="card' + (c.needsYou ? " you" : "") + (c.actioned ? " done" : "") + '" data-card="' + c.id + '"' + (state.open[c.id] ? " open" : "") + ">" + summary + bd + "</details>";
+      return '<details class="card' + (c.needsYou ? " you" : "") + (c.actioned ? " done" : "") + '" data-card="' + c.id + '"' + (state.open[editKey(c)] ? " open" : "") + ">" + summary + bd + "</details>";
     }).join("");
 
     document.querySelectorAll("#cards textarea").forEach(fit);
@@ -502,10 +513,15 @@
       inv.id = i;
       var e = BILL.coverEmail(inv, b.run, state.settings);
       if (billDemo()) { e.subject = bMask(e.subject); e.body = bMask(e.body); }
+      var ed = b.edits[billKey(inv)];
+      if (ed) { e.subject = ed.subject; e.body = ed.body; b.dirty[i] = true; }
       b.emails[i] = e;
     });
     renderBilling();
   }
+
+  // Cover-email edits survive a re-run of the same month (a new sign-off, say), keyed by invoice number.
+  function billKey(inv) { var b = state.bill; return (billDemo() ? "demo" : b.fileName) + "|" + b.run.period.key + "|" + inv.number; }
 
   function kindBadge(inv) {
     var n = inv.notes.join(" "), c = inv.contracts;
@@ -605,9 +621,10 @@
           '<textarea data-bid="' + inv.id + '" aria-label="Cover email" spellcheck="true">' + esc(e.body) + "</textarea>" +
           '<div class="ft"><button class="btn primary" type="button" data-bcopy="' + inv.id + '">Copy email</button>' +
           '<a class="btn" target="_blank" rel="noopener" data-bgmail="' + inv.id + '" href="' + gmailUrl(e) + '">Open in Gmail</a>' + view +
+          (b.dirty[inv.id] ? '<button class="btn ghost" type="button" data-brevert="' + inv.id + '">Discard edits</button>' : "") +
           '<span class="src">Template' + (b.dirty[inv.id] ? " · edited" : "") + "</span></div>"
         : '<div class="needs"><b>Needs action</b><p>No billing email on the contract. Add one and re-run before this invoice can go out.</p></div><div class="ft">' + view + "</div>";
-      return '<details class="card' + (inv.needsYou ? " you" : "") + '" data-inv="' + inv.id + '"' + (b.open[inv.id] ? " open" : "") + ">" + summary +
+      return '<details class="card' + (inv.needsYou ? " you" : "") + '" data-inv="' + inv.id + '"' + (b.open[billKey(inv)] ? " open" : "") + ">" + summary +
         '<div class="bd">' + flags + notes + lines + mail + "</div></details>";
     }).join("");
     document.querySelectorAll("#invCards textarea").forEach(fit);
@@ -639,8 +656,10 @@
       '<button class="btn" type="button" id="dlAr">AR rows CSV</button>' +
       '<button class="btn primary" type="button" id="toAging">Send to aging run</button>';
     $("dlPdfs").onclick = function (e) { downloadPDF(run.invoices, "invoices-" + run.period.key + ".pdf", e.target); };
-    $("dlQbo").onclick = function () { download("invoices-" + run.period.key + "-quickbooks.csv", BILL.importCSV(run)); };
-    $("dlAr").onclick = function () { download("invoices-" + run.period.key + "-ar-rows.csv", BILL.arCSV(run)); };
+    // Demo files are labelled and keep the page's $xx masking.
+    var pre = billDemo() ? "demo-" : "", opts = { mask: billDemo() };
+    $("dlQbo").onclick = function () { download(pre + "invoices-" + run.period.key + "-quickbooks.csv", BILL.importCSV(run, opts)); };
+    $("dlAr").onclick = function () { download(pre + "invoices-" + run.period.key + "-ar-rows.csv", BILL.arCSV(run, opts)); };
     $("toAging").onclick = sendToAging;
     var b = state.billed;
     $("sentNote").hidden = !(b && b.key === run.period.key);
@@ -722,23 +741,33 @@
 
   /* Invoice PDFs are drawn in the browser and saved directly. jsPDF is vendored and loaded on first use. */
   var pdfLib = null;
-  function withPDF(fn) {
-    if (window.jspdf) return fn(window.jspdf.jsPDF);
+  function loadPDF() {
+    if (window.jspdf) return Promise.resolve(window.jspdf.jsPDF);
     if (!pdfLib) pdfLib = new Promise(function (ok, fail) {
       var s = document.createElement("script");
       s.src = "vendor/jspdf-2.5.1.umd.min.js";
       s.onload = function () { ok(window.jspdf.jsPDF); };
-      s.onerror = function () { pdfLib = null; fail(new Error("load")); };
+      // Forget the failed attempt so the next click tries again.
+      s.onerror = function () { pdfLib = null; s.remove(); fail(new Error("Couldn't load the PDF generator. Check your connection and try again.")); };
       document.head.appendChild(s);
     });
-    pdfLib.then(fn, function () { alert("Couldn't load the PDF generator. Check your connection and try again."); });
+    return pdfLib;
   }
   function downloadPDF(invoices, name, btn) {
     var label = btn && btn.textContent;
     if (btn) { btn.textContent = "Preparing…"; btn.disabled = true; }
-    withPDF(function (jsPDF) {
+    // Whatever happens, the button comes back.
+    var restore = function (text, cls) {
+      if (!btn) return;
+      btn.textContent = text; if (cls) btn.classList.add(cls);
+      setTimeout(function () { btn.textContent = label; btn.disabled = false; btn.classList.remove("done", "failed"); }, 1400);
+    };
+    loadPDF().then(function (jsPDF) {
       INVPDF.build(jsPDF, invoices, state.bill.run, billDemo()).save(name);
-      if (btn) { btn.textContent = "Downloaded"; btn.classList.add("done"); setTimeout(function () { btn.textContent = label; btn.disabled = false; btn.classList.remove("done"); }, 1400); }
+      restore("Downloaded", "done");
+    }).catch(function (err) {
+      restore("Failed", "failed");
+      alert(err && /PDF generator/.test(err.message) ? err.message : "Couldn't build the PDF. Try again, or download the QuickBooks CSV instead.");
     });
   }
 
@@ -798,7 +827,7 @@
   });
   $("invCards").addEventListener("toggle", function (e) {
     var el = e.target; if (!el.dataset || el.dataset.inv == null) return;
-    state.bill.open[el.dataset.inv] = el.open;
+    state.bill.open[billKey(state.bill.run.invoices[el.dataset.inv])] = el.open;
     if (el.open) el.querySelectorAll("textarea").forEach(fit);
   }, true);
   $("invCards").addEventListener("input", function (e) {
@@ -806,18 +835,27 @@
     var d = state.bill.emails[id];
     if (e.target.tagName === "TEXTAREA") { d.body = e.target.value; fit(e.target); } else d.subject = e.target.value;
     state.bill.dirty[id] = true;
+    state.bill.edits[billKey(state.bill.run.invoices[id])] = { subject: d.subject, body: d.body };
     var a = document.querySelector('[data-bgmail="' + id + '"]'); if (a) a.href = gmailUrl(d);
   });
   $("invCards").addEventListener("click", function (e) {
     var t = e.target;
     if (t.dataset.view != null) { var vi = state.bill.run.invoices[+t.dataset.view]; downloadPDF([vi], vi.number + ".pdf", t); return; }
+    if (t.dataset.brevert != null) {
+      var bi = state.bill.run.invoices[+t.dataset.brevert], be = BILL.coverEmail(bi, state.bill.run, state.settings);
+      if (billDemo()) { be.subject = bMask(be.subject); be.body = bMask(be.body); }
+      delete state.bill.edits[billKey(bi)]; delete state.bill.dirty[bi.id];
+      state.bill.emails[bi.id] = be;
+      renderInvoices();
+      return;
+    }
     if (t.dataset.bcopy != null) { var d = state.bill.emails[t.dataset.bcopy]; copy("Subject: " + d.subject + "\n\n" + d.body, t); }
   });
 
   // Cards are collapsed by default; remember which are open across re-renders.
   $("cards").addEventListener("toggle", function (e) {
     var el = e.target; if (!el.dataset || el.dataset.card == null) return;
-    state.open[el.dataset.card] = el.open;
+    state.open[editKey(state.result.customers[el.dataset.card])] = el.open;
     if (el.open) el.querySelectorAll("textarea").forEach(fit);
   }, true);
 
@@ -830,6 +868,8 @@
     var d = state.drafts[id];
     if (e.target.tagName === "TEXTAREA") { d.body = e.target.value; fit(e.target); } else d.subject = e.target.value;
     state.dirty[id] = true;
+    d.editedFor = state.runDate;
+    state.edits[editKey(state.result.customers[id])] = { subject: d.subject, body: d.body, runDate: state.runDate };
     var a = document.querySelector('[data-gmail="' + id + '"]'); if (a) a.href = gmailUrl(d);
   });
   $("cards").addEventListener("click", function (e) {
@@ -842,6 +882,13 @@
       applyTicks(state.result);
       render();
       var again = document.querySelector('[data-act="' + c.id + '"]'); if (again) again.focus();
+      return;
+    }
+    if (e.target.dataset.revert != null) {
+      var rc = state.result.customers[e.target.dataset.revert];
+      delete state.edits[editKey(rc)]; delete state.dirty[rc.id];
+      state.drafts[rc.id] = maskDraft(AR.templateDraft(rc, state.runDate, state.settings));
+      renderCards();
       return;
     }
     var id = e.target.dataset.copy; if (id == null) return;

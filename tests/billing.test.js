@@ -218,3 +218,26 @@ test("demo CSV downloads keep their layout but hide every amount", () => {
   // Unmasked by default, so uploaded files still export real figures.
   assert.ok(!/xx/.test(BILL.importCSV(run)));
 });
+
+test("issued invoice numbers survive a re-run that adds a customer", () => {
+  const first = bill([
+    "C-1,Beta,b@x.example,P,1000,Monthly,2026-01-01,,,,,,Net 30,",
+    "C-2,Delta,d@x.example,P,1000,Monthly,2026-01-01,,,,,,Net 30,"
+  ]);
+  assert.deepStrictEqual(first.invoices.map((i) => i.number), ["INV-2610-001", "INV-2610-002"]);
+
+  // Acme sorts first, but Beta and Delta keep the numbers already sent; Acme gets the next one.
+  const p = AR.parseCSV([HEAD,
+    "C-0,Acme,a@x.example,P,1000,Monthly,2026-01-01,,,,,,Net 30,",
+    "C-1,Beta,b@x.example,P,1000,Monthly,2026-01-01,,,,,,Net 30,",
+    "C-2,Delta,d@x.example,P,1000,Monthly,2026-01-01,,,,,,Net 30,"].join("\n"));
+  const again = BILL.billingRun(p.rows, BILL.autoMap(p.headers), OCT, { issued: first.numbers });
+  const num = (n) => inv(again, n).number;
+  assert.strictEqual(num("Beta"), "INV-2610-001");
+  assert.strictEqual(num("Delta"), "INV-2610-002");
+  assert.strictEqual(num("Acme"), "INV-2610-003");
+
+  // Numbers from another month are ignored.
+  const nov = BILL.billingRun(p.rows, BILL.autoMap(p.headers), "2026-11", { issued: first.numbers });
+  assert.deepStrictEqual(nov.invoices.map((i) => i.number), ["INV-2611-001", "INV-2611-002", "INV-2611-003"]);
+});

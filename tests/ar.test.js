@@ -216,14 +216,19 @@ test("Apps Script: core plus runner saves Gmail drafts, posts the digest and set
   const p = AR.parseCSV(DEMO.csv(RUN));
   const values = [p.headers, ...p.rows.map((r) => p.headers.map((h) => r[h]))];
   const drafts = [], posts = [], log = [], triggers = [];
+  const props = { SLACK_WEBHOOK_URL: "https://hooks.slack.test/x", SENDER_NAME: "Sam Ops" };
+  let nextId = 0;
   const builder = { timeBased() { return this; }, everyWeeks(n) { triggers.push(["weeks", n]); return this; }, onWeekDay() { return this; }, atHour() { return this; }, create() { triggers.push(["created"]); } };
   const sandbox = {
-    PropertiesService: { getScriptProperties: () => ({ getProperties: () => ({ SLACK_WEBHOOK_URL: "https://hooks.slack.test/x", SENDER_NAME: "Sam Ops" }) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperties: () => Object.assign({}, props), setProperty: (k, v) => { props[k] = v; } }) },
     SpreadsheetApp: { getActiveSpreadsheet: () => ({
       getSheetByName: (n) => n === "Invoices" ? { getDataRange: () => ({ getValues: () => values }) } : null,
       insertSheet: () => ({ getLastRow: () => log.length, appendRow: (r) => log.push(r) }),
     }) },
-    GmailApp: { createDraft: (to, subject, body, opts) => drafts.push({ to, subject, body, opts }) },
+    GmailApp: {
+      createDraft: (to, subject, body, opts) => { const id = "d" + ++nextId; drafts.push({ id, to, subject, body, opts }); return { getId: () => id }; },
+      getDraft: (id) => { const d = drafts.find((x) => x.id === id); if (!d) throw new Error("gone"); return { deleteDraft: () => drafts.splice(drafts.indexOf(d), 1) }; },
+    },
     UrlFetchApp: { fetch: (url, o) => posts.push({ url, o }) },
     ScriptApp: { getProjectTriggers: () => [], deleteTrigger() {}, newTrigger: () => builder, WeekDay: { MONDAY: "MONDAY" } },
   };
@@ -239,6 +244,14 @@ test("Apps Script: core plus runner saves Gmail drafts, posts the digest and set
   assert.strictEqual(posts.length, 1);
   assert.match(JSON.parse(posts[0].o.payload).text, /outstanding/);
   assert.strictEqual(log.length, 2);
+
+  // The next run replaces its own unsent drafts instead of piling up; a sent one is skipped quietly.
+  const first = drafts.length;
+  drafts.splice(0, 1); // one was sent
+  vm.runInContext("run()", sandbox);
+  assert.strictEqual(drafts.length, first);
+  assert.ok(drafts.every((d) => +d.id.slice(1) > first));
+  assert.deepStrictEqual(JSON.parse(props.DRAFT_IDS), drafts.map((d) => d.id));
 });
 
 test("last contacted takes the latest date per customer and ignores future dates", () => {
@@ -288,4 +301,12 @@ test("an Actioned tick lasts one run: it lapses at the next fortnightly run", ()
   assert.strictEqual(AR.tickActive(ticked, RUN + 14 * DAY), false); // next run
   assert.strictEqual(AR.tickActive(ticked, RUN - DAY), false); // run date moved before the tick
   assert.strictEqual(AR.tickActive(null, RUN), false);
+});
+
+test("an invoice # that is paid in one row and open in another is reported, and negative $k amounts read -$", () => {
+  const res = run([row("INV-7", "Customer A", "1000", 20, { status: "Paid", paid: "1000" }), row("INV-7", "Customer A", "1000", 20)]);
+  assert.deepStrictEqual(res.excluded.conflicts, ["INV-7"]);
+  assert.strictEqual(res.excluded.duplicate, 1);
+  assert.strictEqual(AR.fmtK(-1500), "-$1.5k");
+  assert.strictEqual(AR.fmtK(2500), "$2.5k");
 });

@@ -201,10 +201,23 @@
       if (names.length > 1) inv.notes.push("Split by payment terms: this customer has contracts on " + names.join(" and ") + ", so each gets its own invoice and due date");
     });
 
+    // Numbers already issued this month (settings.issued, keyed by numberKey) are kept, so a
+    // re-run after adding a customer never renumbers an invoice that has gone out. New
+    // invoices continue the sequence after the highest number issued.
     var yymm = String(P.year).slice(2) + (P.month < 9 ? "0" : "") + (P.month + 1);
-    invoices.forEach(function (inv, i) {
-      var seq = settings.startSeq + i;
-      inv.number = settings.prefix + yymm + "-" + (seq < 10 ? "00" : seq < 100 ? "0" : "") + seq;
+    var stem = settings.prefix + yymm + "-", issued = settings.issued || {}, taken = {};
+    var seq = settings.startSeq - 1;
+    Object.keys(issued).forEach(function (k) {
+      var n = String(issued[k]);
+      if (n.indexOf(stem) !== 0) return;
+      taken[n] = true;
+      seq = Math.max(seq, parseInt(n.slice(stem.length), 10) || 0);
+    });
+    var numbers = {};
+    invoices.forEach(function (inv) { var n = issued[numberKey(inv)]; if (n && taken[n]) { inv.number = n; delete taken[n]; } });
+    invoices.forEach(function (inv) {
+      if (!inv.number) { seq++; inv.number = stem + (seq < 10 ? "00" : seq < 100 ? "0" : "") + seq; }
+      numbers[numberKey(inv)] = inv.number;
       inv.issueDate = P.end;
       inv.dueDate = P.end + termsDays(inv.terms) * DAY;
       inv.total = r2(inv.lines.reduce(function (s, l) { return s + l.amount; }, 0));
@@ -214,11 +227,14 @@
 
     var total = r2(invoices.reduce(function (s, i) { return s + i.total; }, 0));
     return {
-      period: P, invoices: invoices, skipped: skipped, unreadable: unreadable, dates: dates,
+      period: P, invoices: invoices, skipped: skipped, unreadable: unreadable, dates: dates, numbers: numbers,
       total: total, bridge: bridgeOf(contracts, skipped, map.lastBilled),
       needsYou: invoices.filter(function (i) { return i.needsYou; }).length + skipped.filter(function (s) { return s.needsYou; }).length
     };
   }
+
+  /* What identifies an invoice across re-runs of the same month: the customer and its payment terms. */
+  function numberKey(inv) { return inv.customer.toLowerCase() + "|" + termsDays(inv.terms); }
 
   /* Last month's total to this month's, contract by contract. Every dollar of change gets a reason. */
   function bridgeOf(contracts, skipped, hasLast) {
@@ -309,6 +325,6 @@
 
   return {
     FIELDS: FIELDS, autoMap: autoMap, missingRequired: missingRequired, periodOf: periodOf, freqOf: freqOf, termsDays: termsDays,
-    billingRun: billingRun, importCSV: importCSV, arRecords: arRecords, arCSV: arCSV, AR_HEADERS: AR_HEADERS, coverEmail: coverEmail, DEFAULTS: DEFAULTS
+    billingRun: billingRun, numberKey: numberKey, importCSV: importCSV, arRecords: arRecords, arCSV: arCSV, AR_HEADERS: AR_HEADERS, coverEmail: coverEmail, DEFAULTS: DEFAULTS
   };
 });

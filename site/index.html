@@ -3,8 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AR Chaser</title>
+<title>SnapMagic billing &amp; collections · prototype by Jake Makking-Robinson</title>
 <meta name="description" content="Month-end invoicing to collections for SnapMagic: who to bill and for how much, then who owes money this fortnight and what to send each of them. Billing run, aging by customer, tiered chaser drafts, a Slack digest and an Apps Script that runs the aging every 14 days. Prototype by Jake Makking-Robinson.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jakem-r.github.io/snapmagic-ar-chaser/">
+<meta property="og:title" content="SnapMagic billing &amp; collections">
+<meta property="og:description" content="A working prototype by Jake Makking-Robinson: month-end invoices, then who owes money every two weeks and what to send each of them.">
+<meta property="og:image" content="https://jakem-r.github.io/snapmagic-ar-chaser/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <!-- Set to the deployed Worker URL to draft with Claude. Empty means templates only. -->
 <meta name="worker-url" content="">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,11 +25,13 @@
   --orange:#EE8038; --orange-ink:#B85A1C; --orange-soft:#FDF0E6;
   --navy:#34507A; --navy-soft:#EAEFF6;
   --indigo:#1F1F6E;
-  --you:#3A2FB8; --you-soft:#EEEDFB; --you-line:#C9C5F2;
+  /* Needs action uses the brand navy, so overdue colours stay a single warm ramp. */
+  --you:#34507A; --you-soft:#EAEFF6; --you-line:#B9C6DA;
   --surface:#F5F5F5; --line:#E2E2E2; --line-2:#D0D0D0;
   --bg:#FFFFFF;
   --ink:#1D2430; --ink-2:#4A5361; --ink-3:#7A818C;
-  --b-current:#A7B5C8; --b-1:#F2B544; --b-31:#EE8038; --b-61:#B5532A; --b-90:#34507A;
+  /* Days past due: one ramp, lightest to darkest as money gets older. */
+  --b-current:#C9D1DC; --b-1:#F6BE91; --b-31:#EE8038; --b-61:#C2541C; --b-90:#7A2E12;
   --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --r:12px;
@@ -75,13 +85,20 @@ section:first-child{margin-top:0}
 h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--navy);margin:0 0 4px}
 .sub{color:var(--ink-2);margin:0 0 20px;font-size:14px;max-width:640px}
 
+/* Intro */
+.intro{background:var(--surface);border-bottom:1px solid var(--line)}
+.intro .wrap{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px;padding-top:14px;padding-bottom:14px;font-size:14px;color:var(--ink-2)}
+.intro p{margin:0;flex:1;min-width:260px;max-width:680px}
+.intro b{color:var(--ink);font-weight:600}
+.intro a{font-weight:500;white-space:nowrap}
+
 /* Headline */
-.headline{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 32px}
+.headline{display:block}
 .headline h1{margin:0;font-size:40px;line-height:1.1;letter-spacing:-.025em;color:var(--navy);font-weight:700}
-.headline h1 .sep{color:var(--line-2);font-weight:400;margin:0 6px}
-.headline h1 small{font-size:.7em;color:var(--ink-2);font-weight:600}
-.dates{font-size:13px;color:var(--ink-2);text-align:right;line-height:1.7}
-.dates b{color:var(--ink);font-weight:600}
+.figures{display:flex;flex-wrap:wrap;gap:12px 40px;margin-top:16px}
+.fig{display:flex;flex-direction:column}
+.fig .k{font-size:12px;color:var(--ink-3)}
+.fig .v{font-size:20px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
 .callouts{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
 .callout{font-size:13px;padding:6px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2)}
 .callout b{color:var(--ink)}
@@ -144,6 +161,7 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
 .card.done:hover{opacity:1}
 .tag.done{background:#EAF4EE;color:#2F6F4E}
 .card .preview{font-size:13px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card[open] .preview{display:none}
 .card .sr2{display:flex;align-items:center;gap:8px;flex:none}
 .card .chev{width:16px;height:16px;color:var(--ink-3);transition:transform .15s}
 .card[open] .chev{transform:rotate(180deg)}
@@ -320,8 +338,8 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   main.wrap{padding-top:24px}
   section{margin-top:40px}
   .headline h1{font-size:28px}
-  .headline h1 .sep{margin:0 2px}
-  .dates{text-align:left}
+  .figures{gap:10px 24px}
+  .fig .v{font-size:17px}
   .aging thead{display:none}
   .aging td.b{display:none}
   .aging tr{display:grid;grid-template-columns:1fr auto;gap:6px 12px;padding:12px 0;border-bottom:1px solid var(--line)}
@@ -359,6 +377,13 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   </div>
 </header>
 
+<div class="intro">
+  <div class="wrap">
+    <p><b>A working prototype for SnapMagic's finance operations.</b><span class="lg"> Bill customers at month-end, then see who owes money every two weeks and what to send each of them.</span> Built by Jake Makking-Robinson.</p>
+    <a href="https://github.com/JakeM-R/snapmagic-ar-chaser#readme" target="_blank" rel="noopener">How it works ↗</a>
+  </div>
+</div>
+
 <nav class="stagebar" aria-label="Steps">
   <div class="wrap" role="tablist">
     <button class="stage" role="tab" type="button" id="stageBill" data-stage="bill" aria-selected="true"><span class="n">1</span><span><b>Month-end billing</b><small>Who to invoice, and for how much</small></span></button>
@@ -371,11 +396,10 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   <div class="wrap">
     <label class="field bill-only"><span class="lg">Billing month</span><input type="month" id="billMonth" aria-label="Billing month"></label>
     <label class="field age-only"><span class="lg">Run date</span><input type="date" id="runDate" aria-label="Run date"></label>
-    <span class="field hide-sm age-only" id="nextRun"></span>
     <span class="spacer"></span>
     <div class="tabs age-only" role="tablist" aria-label="Data source">
       <button role="tab" id="tabDemo" type="button" aria-selected="true">Demo<span class="lg"> data</span></button>
-      <button role="tab" id="tabUpload" type="button" aria-selected="false">Automation</button>
+      <button role="tab" id="tabUpload" type="button" aria-selected="false">Your data</button>
     </div>
     <details class="signoff" id="settings">
       <summary class="btn ghost" aria-label="Sign-off settings">Sign-off</summary>
@@ -396,7 +420,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
     <section>
       <div class="headline">
         <h1 id="billHeadline" class="num"></h1>
-        <div class="dates" id="billDates"></div>
+        <div class="figures num" id="billFigures"></div>
       </div>
       <div class="callouts" id="billCallouts"></div>
       <div class="srcrow" id="billSrc"></div>
@@ -431,7 +455,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
       <summary>Columns the contracts file needs</summary>
       <p class="sub">Export active contracts or deals from HubSpot, or keep them in a Sheet, as CSV with one row per contract. Use these column names, or download the template. If your file names a column differently, you match it after choosing the file.</p>
       <div class="gtable" id="billGuideTable"></div>
-      <p class="sub small">Slash dates are read as US (MM/DD/YYYY). ISO dates (2026-10-16) and "Oct 16, 2026" also work.</p>
+      <p class="sub small">Slash dates are read as US (MM/DD/YYYY) unless the file shows they are day first, and you can choose when matching columns. ISO dates (2026-10-16) and "Oct 16, 2026" also work.</p>
     </details>
   </div>
 
@@ -444,7 +468,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
       <summary>Columns the export needs</summary>
       <p class="sub">Export invoices from HubSpot or QuickBooks as CSV, one row per invoice, including paid ones if you want the late-history modifier. Use these column names, or download the template. If your export names a column differently, you match it after choosing the file.</p>
       <div class="gtable" id="guideTable"></div>
-      <p class="sub small">Slash dates are read as US (MM/DD/YYYY). ISO dates (2026-10-16) and "Oct 16, 2026" also work.</p>
+      <p class="sub small">Slash dates are read as US (MM/DD/YYYY) unless the file shows they are day first, and you can choose when matching columns. ISO dates (2026-10-16) and "Oct 16, 2026" also work.</p>
     </details>
   </section>
 
@@ -453,7 +477,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   <section id="top">
     <div class="headline">
       <h1 id="headline" class="num"></h1>
-      <div class="dates" id="dates"></div>
+      <div class="figures num" id="figures"></div>
     </div>
     <div class="callouts" id="callouts"></div>
   </section>

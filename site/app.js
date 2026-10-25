@@ -6,7 +6,8 @@
   var WORKER_URL = (document.querySelector('meta[name="worker-url"]') || {}).content || "";
 
   var BUCKET_VARS = { current: "--b-current", b1: "--b-1", b31: "--b-31", b61: "--b-61", b90: "--b-90" };
-  var TIER_COLORS = ["#6B7A90", "#8A6510", "#B85A1C", "#9A4422", "#34507A", "#34507A"];
+  // Text-safe shades of the aging ramp: tiers 1–2 are 1–30 days, then 31–60, 61–90, 90+.
+  var TIER_COLORS = ["#6B7A90", "#A35A24", "#A35A24", "#B85A1C", "#9A3F15", "#7A2E12"];
 
   var state = {
     source: "demo", fileName: "", rows: [], headers: [], map: {},
@@ -278,13 +279,10 @@
     pill.title = isDemo() ? "Fictional customers and figures" : "Your file, processed in this browser";
 
     $("runDate").value = AR.isoDate(state.runDate);
-    $("nextRun").textContent = "Next run " + AR.fmtDate(res.nextRun);
 
     var n = res.toChase;
-    $("headline").innerHTML = n + " customer" + (n === 1 ? "" : "s") + " to chase" +
-      '<span class="sep">·</span><small>' + kMoney(res.totalAR) + " outstanding</small>" +
-      '<span class="sep">·</span><small>' + kMoney(res.over30) + " over 30 days</small>";
-    $("dates").innerHTML = "Run <b>" + esc(AR.fmtDate(res.runDate)) + "</b><br>Next run <b>" + esc(AR.fmtDate(res.nextRun)) + "</b>";
+    $("headline").textContent = n + " customer" + (n === 1 ? "" : "s") + " to chase";
+    $("figures").innerHTML = fig("Outstanding", kMoney(res.totalAR)) + fig("Over 30 days", kMoney(res.over30)) + fig("Next run", esc(AR.fmtDate(res.nextRun)));
 
     var needs = res.customers.filter(function (c) { return c.needsYou; });
     var chase = res.customers.filter(function (c) { return c.action === "chase"; }).length;
@@ -309,6 +307,9 @@
     renderRubric();
     $("slack").textContent = slackText();
   }
+
+  // One key figure under a headline: small label, value below. The value is already escaped.
+  function fig(k, v) { return '<div class="fig"><span class="k">' + esc(k) + '</span><span class="v">' + v + "</span></div>"; }
 
   function slackText() {
     // ar.js escapes for Slack's API; the copy button wants plain text.
@@ -336,7 +337,6 @@
         return v ? '<span style="width:' + (v / c.balance * 100).toFixed(2) + "%;background:var(" + BUCKET_VARS[b.key] + ')" title="' + b.label + ": " + money(v) + '"></span>' : "";
       }).join("");
       var meta = [];
-      if (isDemo()) meta.push('<span class="tag demo">Demo</span>');
       if (c.needsYou) meta.push('<span class="tag you">Needs action</span>');
       if (c.actioned) meta.push('<span class="tag done">Actioned</span>');
       meta.push("<span>" + (c.tier ? c.oldestDays + " days overdue · " + esc(contactText(c).replace("Last contacted", "contacted").replace("No contact logged", "no contact logged")) : "Not yet due") + "</span>");
@@ -384,7 +384,7 @@
         : "Check this account before anything goes out.";
       var preview = d.body ? "Draft ready: " + d.subject : why;
       var summary = '<summary><div class="sl"><div class="cname">' + esc(c.name) + "</div>" +
-        '<div class="facts num">' + (isDemo() ? '<span class="tag demo">Demo</span> ' : "") + facts + "</div>" +
+        '<div class="facts num">' + facts + "</div>" +
         '<div class="contact">' + esc(contactText(c)) + "</div>" +
         '<div class="preview">' + esc(preview) + "</div></div>" +
         '<div class="sr2">' + (c.needsYou ? '<span class="tag you">Needs action</span>' : "") + tierBadge(c) +
@@ -531,16 +531,15 @@
     if (c.some(function (x) { return x.freq.months === 3 && x.onCycle; })) return '<span class="badge">Quarterly</span>';
     if (c.some(function (x) { return x.usage; })) return '<span class="badge">Usage</span>';
     if (/renewal/.test(n)) return '<span class="badge final">Renewal due</span>';
-    return '<span class="badge">Monthly</span>';
+    return ""; // a routine monthly bill needs no badge
   }
 
   function renderBilling() {
     var b = state.bill, run = b.run, P = run.period;
     $("billMonth").value = P.key;
     var n = run.invoices.length;
-    $("billHeadline").innerHTML = n + " invoice" + (n === 1 ? "" : "s") + " to send" +
-      '<span class="sep">·</span><small>' + bK(run.total) + " billed</small>";
-    $("billDates").innerHTML = "Billing month <b>" + esc(P.label) + "</b><br>Issued <b>" + esc(AR.fmtDate(P.end)) + "</b>";
+    $("billHeadline").textContent = n + " invoice" + (n === 1 ? "" : "s") + " to send";
+    $("billFigures").innerHTML = fig("Billed", bK(run.total)) + fig("Issued", esc(AR.fmtDate(P.end)));
 
     var needs = run.invoices.filter(function (i) { return i.needsYou; }).map(function (i) { return i.customer; })
       .concat(run.skipped.filter(function (s) { return s.needsYou; }).map(function (s) { return s.customer; }));
@@ -603,8 +602,8 @@
       var e = b.emails[inv.id];
       var facts = esc(inv.number) + " · " + bMoney(inv.total) + " · " + inv.lines.length + " line" + (inv.lines.length === 1 ? "" : "s") + " · due " + esc(AR.fmtShortDate(inv.dueDate));
       var summary = '<summary><div class="sl"><div class="cname">' + esc(inv.customer) + "</div>" +
-        '<div class="facts num">' + (billDemo() ? '<span class="tag demo">Demo</span> ' : "") + facts + "</div>" +
-        '<div class="contact">' + (inv.email ? esc(inv.email) : "No billing email") + "</div>" +
+        '<div class="facts num">' + facts + "</div>" +
+        (inv.email ? '<div class="contact">' + esc(inv.email) + "</div>" : "") +
         '<div class="preview">' + esc(inv.flags[0] || inv.notes[0] || "Ready to send") + "</div></div>" +
         '<div class="sr2">' + (inv.needsYou ? '<span class="tag you">Needs action</span>' : "") + kindBadge(inv) +
         '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div></summary>';

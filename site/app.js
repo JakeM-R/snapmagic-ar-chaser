@@ -385,9 +385,11 @@
     if (ex.duplicate) parts.push(ex.duplicate + " duplicate invoice #");
     if (ex.unreadable) parts.push(ex.unreadable + " unreadable");
     var nRows = allRows().length;
-    $("excluded").innerHTML = res.excludedTotal
+    var cf = ex.conflicts || [];
+    $("excluded").innerHTML = (res.excludedTotal
       ? "<b>Left out " + res.excludedTotal + " of " + nRows + " rows:</b> " + esc(parts.join(", ")) + "."
-      : "<b>No rows left out</b> (" + nRows + " rows).";
+      : "<b>No rows left out</b> (" + nRows + " rows).") +
+      (cf.length ? " <b>Check the export:</b> " + esc(cf.join(", ")) + (cf.length === 1 ? " is" : " are") + " listed as both paid and open; the first row was used." : "");
   }
 
   // Tier as coloured text on the facts line. A disputed invoice isn't a tier: it gets a billing reply.
@@ -545,7 +547,7 @@
   function runBilling() {
     var b = state.bill;
     var fx = withFixes(b.rows, b.map, b.fixes, billSrc() + "|");
-    b.run = BILL.billingRun(fx.rows, fx.map, b.period, { dateOrder: b.dateOrder });
+    b.run = BILL.billingRun(fx.rows, fx.map, b.period, { dateOrder: b.dateOrder, issued: readIssued(BILL.periodOf(b.period).key) });
     b.run.invoices.forEach(function (inv) {
       var f = b.fixes[billSrc() + "|" + inv.customer.toLowerCase()];
       if (f) inv.notes.push((f.email && f.po ? "Email and PO" : f.email ? "Email" : "PO") + " added on this page, not in the file: update the record too");
@@ -564,6 +566,21 @@
 
   // Cover-email edits survive a re-run of the same month (a new sign-off, say), keyed by invoice number.
   function billSrc() { return billDemo() ? "demo" : state.bill.fileName; }
+
+  // Invoice numbers become fixed once an invoice leaves the page (a PDF, a CSV, a copied or
+  // opened email, or the hand-off), so a later re-run keeps them. Kept in this browser.
+  var issuedMem = {};
+  function issuedKey(period) { return "arc:issued:" + billSrc() + ":" + period; }
+  function readIssued(period) {
+    try { var v = localStorage.getItem(issuedKey(period)); if (v) return JSON.parse(v); } catch (e) { /* memory only */ }
+    return issuedMem[issuedKey(period)] || {};
+  }
+  function markIssued(invoices) {
+    var run = state.bill.run, k = issuedKey(run.period.key), cur = readIssued(run.period.key);
+    invoices.forEach(function (inv) { cur[BILL.numberKey(inv)] = inv.number; });
+    issuedMem[k] = cur;
+    try { localStorage.setItem(k, JSON.stringify(cur)); } catch (e) { /* memory only */ }
+  }
   function billKey(inv) { return billSrc() + "|" + state.bill.run.period.key + "|" + inv.number; }
 
   function kindBadge(inv) {
@@ -700,11 +717,11 @@
       '<button class="btn" type="button" id="dlQbo">QuickBooks CSV</button>' +
       '<button class="btn" type="button" id="dlAr" title="The invoices as rows for the aging run\'s own upload">AR rows CSV</button>' +
       '<button class="btn primary" type="button" id="toAging">Send to aging run</button>';
-    $("dlPdfs").onclick = function (e) { downloadPDF(run.invoices, "invoices-" + run.period.key + ".pdf", e.target); };
+    $("dlPdfs").onclick = function (e) { markIssued(run.invoices); downloadPDF(run.invoices, "invoices-" + run.period.key + ".pdf", e.target); };
     // Demo files are labelled and keep the page's $xx masking.
     var pre = billDemo() ? "demo-" : "", opts = { mask: billDemo() };
-    $("dlQbo").onclick = function () { download(pre + "invoices-" + run.period.key + "-quickbooks.csv", BILL.importCSV(run, opts)); };
-    $("dlAr").onclick = function () { download(pre + "invoices-" + run.period.key + "-ar-rows.csv", BILL.arCSV(run, opts)); };
+    $("dlQbo").onclick = function () { markIssued(run.invoices); download(pre + "invoices-" + run.period.key + "-quickbooks.csv", BILL.importCSV(run, opts)); };
+    $("dlAr").onclick = function () { markIssued(run.invoices); download(pre + "invoices-" + run.period.key + "-ar-rows.csv", BILL.arCSV(run, opts)); };
     $("toAging").onclick = sendToAging;
     var b = state.billed;
     $("sentNote").hidden = !(b && b.key === run.period.key);
@@ -714,6 +731,7 @@
   function sendToAging() {
     var run = state.bill.run;
     if (!run || !run.invoices.length) return;
+    markIssued(run.invoices);
     state.billed = {
       key: run.period.key, label: run.period.label, count: run.invoices.length, demo: billDemo(),
       firstDue: Math.min.apply(null, run.invoices.map(function (i) { return i.dueDate; })),
@@ -941,7 +959,7 @@
   });
   $("invCards").addEventListener("click", function (e) {
     var t = e.target;
-    if (t.dataset.view != null) { var vi = state.bill.run.invoices[+t.dataset.view]; downloadPDF([vi], vi.number + ".pdf", t); return; }
+    if (t.dataset.view != null) { var vi = state.bill.run.invoices[+t.dataset.view]; markIssued([vi]); downloadPDF([vi], vi.number + ".pdf", t); return; }
     if (t.dataset.brevert != null) {
       var bi = state.bill.run.invoices[+t.dataset.brevert], be = BILL.coverEmail(bi, state.bill.run, state.settings);
       if (billDemo()) { be.subject = bMask(be.subject); be.body = bMask(be.body); }
@@ -950,7 +968,8 @@
       renderInvoices();
       return;
     }
-    if (t.dataset.bcopy != null) { var d = state.bill.emails[t.dataset.bcopy]; copy("Subject: " + d.subject + "\n\n" + d.body, t); }
+    if (t.dataset.bgmail != null) markIssued([state.bill.run.invoices[+t.dataset.bgmail]]);
+    if (t.dataset.bcopy != null) { markIssued([state.bill.run.invoices[+t.dataset.bcopy]]); var d = state.bill.emails[t.dataset.bcopy]; copy("Subject: " + d.subject + "\n\n" + d.body, t); }
   });
 
   // Cards are collapsed by default; remember which are open across re-renders.

@@ -526,7 +526,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 
   <section id="script" hidden>
     <h2>Make it run itself</h2>
-    <p class="sub">A Google Apps Script with the same aging, rubric and templates as this page (it's the same code). Every 14 days it reads the invoice export in a Sheet, saves one Gmail draft per customer for you to review, and posts the digest to Slack. Nothing sends without you.</p>
+    <p class="sub">A Google Apps Script with the same aging, rubric and templates as this page (it's the same code). Every 14 days it reads the invoice export in a Sheet, saves one Gmail draft per customer for you to review (replacing last run's drafts you didn't send), and posts the digest to Slack. Nothing sends without you.</p>
     <ol class="steps">
       <li><span>Paste the HubSpot or QuickBooks invoice export into a Google Sheet, in a tab named <code>Invoices</code>, headers in row 1.</span></li>
       <li><span>Open <b>Extensions › Apps Script</b>, replace the contents of <code>Code.gs</code> with the script below, and save.</span></li>

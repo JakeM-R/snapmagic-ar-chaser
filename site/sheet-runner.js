@@ -8,6 +8,9 @@
  *   FOUNDER_NAME, FOUNDER_ROLE  sign-off for tier 4
  *   SHEET_NAME         tab holding the invoice export (default "Invoices")
  *   COLUMN_MAP         optional JSON override, e.g. {"customer":"Client","dueDate":"Due"}
+ *
+ * Each run replaces the drafts the previous run saved and you didn't send, so old figures
+ * never pile up in Gmail. It keeps their ids in the DRAFT_IDS script property.
  */
 
 function setup() {
@@ -45,14 +48,21 @@ function run() {
   if (props.FOUNDER_ROLE) settings.founderRole = props.FOUNDER_ROLE;
 
   var res = AR.analyze(rows, map, runDate, settings);
-  var drafted = 0;
+  var store = PropertiesService.getScriptProperties();
+  var previous = JSON.parse(props.DRAFT_IDS || "[]");
+  previous.forEach(function (id) {
+    // Gone already if it was sent or deleted by hand; that's fine.
+    try { GmailApp.getDraft(id).deleteDraft(); } catch (e) { /* not there */ }
+  });
+  var drafted = 0, ids = [];
   res.customers.forEach(function (c) {
     var d = AR.templateDraft(c, runDate, res.settings);
     if (!d.body || !d.to) return;
     var opts = d.cc ? { cc: d.cc } : {};
-    GmailApp.createDraft(d.to, d.subject, d.body, opts);
+    ids.push(GmailApp.createDraft(d.to, d.subject, d.body, opts).getId());
     drafted++;
   });
+  store.setProperty("DRAFT_IDS", JSON.stringify(ids));
 
   var digest = AR.slackDigest(res);
   if (props.SLACK_WEBHOOK_URL) {

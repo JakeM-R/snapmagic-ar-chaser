@@ -165,7 +165,7 @@
   }
   function fmtK(n) {
     if (Math.abs(n) < 1000) return fmtMoney(Math.round(n));
-    return "$" + (n / 1000).toFixed(1) + "k";
+    return (n < 0 ? "-$" : "$") + (Math.abs(n) / 1000).toFixed(1) + "k";
   }
 
   function addBusinessDays(t, n) {
@@ -232,7 +232,7 @@
     var g = function (r, k) { return map[k] ? r[map[k]] : ""; };
     var dates = dateOrderOf(rows, [map.dueDate, map.issueDate, map.paidDate, map.lastContacted], settings.dateOrder);
     var pd = function (v) { return parseDate(v, dates.order); };
-    var excluded = { paid: 0, nonPositive: 0, noDueDate: 0, duplicate: 0, unreadable: 0 };
+    var excluded = { paid: 0, nonPositive: 0, noDueDate: 0, duplicate: 0, unreadable: 0, conflicts: [] };
     var seen = {}, customers = {}, history = {};
 
     function cust(name) {
@@ -258,10 +258,12 @@
       var dupKey = inv.toLowerCase();
       if (seen[dupKey]) {
         excluded.duplicate++;
-        cust(seen[dupKey]).dupes.push(inv);
+        cust(seen[dupKey].name).dupes.push(inv);
+        // Paid in one row and open in another: the first row stands, but someone should look.
+        if (seen[dupKey].paid !== isPaidStatus(status)) excluded.conflicts.push(inv);
         return;
       }
-      seen[dupKey] = name;
+      seen[dupKey] = { name: name, paid: isPaidStatus(status) };
 
       // Late history comes from settled invoices in the last 12 months.
       if (map.paidDate && paidDate != null && due != null && run - paidDate <= 365 * DAY && paidDate <= run) {

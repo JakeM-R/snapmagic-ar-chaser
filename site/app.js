@@ -12,9 +12,9 @@
   var state = {
     source: "demo", fileName: "", rows: [], headers: [], map: {},
     ticks: {}, sort: { aging: "overdue", drafts: "overdue" }, onlyYou: { aging: false, drafts: false }, tab: "demo", runDate: todayUTC(), settings: Object.assign({}, AR.DEFAULT_SETTINGS),
-    result: null, drafts: {}, dirty: {}, edits: {}, open: {}, draftMode: "template", runId: 0,
+    result: null, drafts: {}, dirty: {}, edits: {}, fixes: {}, open: {}, draftMode: "template", runId: 0,
     stage: "bill", billed: null,
-    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, dateOrder: "auto", period: null, run: null, emails: {}, dirty: {}, edits: {}, open: {}, pending: null }
+    bill: { source: "demo", fileName: "", rows: [], headers: [], map: {}, dateOrder: "auto", period: null, run: null, emails: {}, dirty: {}, edits: {}, fixes: {}, open: {}, pending: null }
   };
   state.bill.period = BILL.periodOf(todayUTC()).start;
 
@@ -30,6 +30,32 @@
     });
   }
   function allRows() { return state.rows.concat(billedRows()); }
+
+  // A missing email or PO typed into a Needs action card fills the blanks in that customer's
+  // rows for this session. The file itself is unchanged, so the card says to update the record.
+  function withFixes(rows, map, fixes, prefix) {
+    var keys = Object.keys(fixes).filter(function (k) { return k.indexOf(prefix) === 0; });
+    if (!keys.length) return { rows: rows, map: map };
+    var m = Object.assign({}, map);
+    ["email", "po"].forEach(function (f) { if (!m[f] && keys.some(function (k) { return fixes[k][f]; })) m[f] = "__" + f; });
+    return {
+      map: m,
+      rows: rows.map(function (r) {
+        var fx = fixes[prefix + String(r[m.customer] || "").trim().toLowerCase()];
+        if (!fx) return r;
+        var o = Object.assign({}, r);
+        Object.keys(fx).forEach(function (f) { if (m[f] && !String(o[m[f]] || "").trim()) o[m[f]] = fx[f]; });
+        return o;
+      })
+    };
+  }
+
+  function fixForm(field, id, scope, label, placeholder) {
+    return '<form class="fix" data-field="' + field + '" data-fid="' + id + '" data-scope="' + scope + '">' +
+      '<input type="' + (field === "email" ? "email" : "text") + '" aria-label="' + esc(label) + '" placeholder="' + esc(placeholder) + '" required>' +
+      '<button class="btn primary" type="submit">Use ' + (field === "email" ? "this email" : "this PO") + "</button>" +
+      '<span class="err" hidden></span></form>';
+  }
 
   function todayUTC() { var d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -214,7 +240,8 @@
   function editKey(c) { return (isDemo() ? "demo" : state.fileName) + "|" + c.name.toLowerCase(); }
 
   function runAnalysis() {
-    state.result = AR.analyze(allRows(), state.map, state.runDate, state.settings);
+    var fx = withFixes(allRows(), state.map, state.fixes, (isDemo() ? "demo" : state.fileName) + "|");
+    state.result = AR.analyze(fx.rows, fx.map, state.runDate, state.settings);
     applyTicks(state.result);
     state.drafts = {}; state.dirty = {}; state.draftMode = "template";
     state.result.customers.forEach(function (c, i) {
@@ -358,15 +385,16 @@
     if (ex.duplicate) parts.push(ex.duplicate + " duplicate invoice #");
     if (ex.unreadable) parts.push(ex.unreadable + " unreadable");
     var nRows = allRows().length;
-    $("excluded").textContent = res.excludedTotal
-      ? "Excluded " + res.excludedTotal + " of " + nRows + " rows: " + parts.join(", ") + "."
-      : "No rows excluded (" + nRows + " rows).";
+    $("excluded").innerHTML = res.excludedTotal
+      ? "<b>Left out " + res.excludedTotal + " of " + nRows + " rows:</b> " + esc(parts.join(", ")) + "."
+      : "<b>No rows left out</b> (" + nRows + " rows).";
   }
 
-  function tierBadge(c) {
-    var label = c.action === "billing" ? "Billing question" : AR.TIER_NAMES[c.tier];
+  // Tier as coloured text on the facts line. A disputed invoice isn't a tier: it gets a billing reply.
+  function tierLabel(c) {
     var col = TIER_COLORS[c.tier];
-    return '<span class="tier" style="color:' + col + ";border-color:" + col + '55"><i style="background:' + col + '"></i>Tier ' + c.tier + " · " + esc(label) + "</span>";
+    var label = c.action === "billing" || (c.disputed && c.disputed.length && c.action !== "chase") ? "Disputed" : "Tier " + c.tier + " · " + AR.TIER_NAMES[c.tier];
+    return '<span class="tier" style="color:' + col + '"><i style="background:' + col + '"></i>' + esc(label) + "</span>";
   }
 
   function renderCards() {
@@ -374,32 +402,35 @@
     var shown = sorted(res.customers.filter(function (c) { return c.tier >= 1; }), state.sort.drafts, state.onlyYou.drafts);
     $("cards").innerHTML = shown.map(function (c) {
       var d = state.drafts[c.id];
-      var facts = money(c.balance) + " open · " + c.invoices.length + " invoice" + (c.invoices.length === 1 ? "" : "s") + " · " + c.oldestDays + " days overdue";
+      var facts = tierLabel(c) + '<span class="sep">·</span><span>' + money(c.balance) + " open · " + c.invoices.length + " invoice" + (c.invoices.length === 1 ? "" : "s") + " · " + c.oldestDays + " days overdue</span>";
       var flags = c.flags.map(function (f) { return "<li>" + esc(mask(f)) + "</li>"; });
       if (c.toneNote && c.action === "chase") flags.push('<li class="tone">' + esc(c.toneNote) + "</li>");
       if (state.dirty[c.id] && d.editedFor !== state.runDate) flags.push("<li>You edited this draft for the " + esc(AR.fmtDate(d.editedFor)) + " run. Check its figures and dates before sending.</li>");
+      if (state.fixes[editKey(c)]) flags.push("<li>Email added on this page, not in the export. Update the record so the next run has it.</li>");
       if (d.rejected) flags.push("<li>AI draft failed a rule check (" + esc(mask(d.rejected[0])) + "), template used</li>");
       var why = c.tier === 5 ? "Over 90 days. This needs a call from you, not another email."
-        : !c.email ? "No contact email in the export. Fix the record and re-run."
+        : !c.email ? "No contact email in the export. Add one here to draft the email, and update the record too."
         : "Check this account before anything goes out.";
       var preview = d.body ? "Draft ready: " + d.subject : why;
       var summary = '<summary><div class="sl"><div class="cname">' + esc(c.name) + "</div>" +
         '<div class="facts num">' + facts + "</div>" +
         '<div class="contact">' + esc(contactText(c)) + "</div>" +
         '<div class="preview">' + esc(preview) + "</div></div>" +
-        '<div class="sr2">' + (c.needsYou ? '<span class="tag you">Needs action</span>' : "") + tierBadge(c) +
+        '<div class="sr2">' + (c.needsYou ? '<span class="tag you">Needs action</span>' : "") +
         '<span class="act' + (c.actioned ? " on" : "") + '" data-act="' + c.id + '" role="checkbox" tabindex="0" aria-checked="' + c.actioned + '" title="Tick once handled. Clears Needs action and logs today as last contacted.">' +
         '<input type="checkbox" tabindex="-1" aria-hidden="true"' + (c.actioned ? " checked" : "") + '>Actioned</span>' +
         '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div></summary>';
       var fl = flags.length ? '<ul class="flags">' + flags.join("") + "</ul>" : "";
       var bd;
       if (!d.body) {
-        bd = '<div class="bd">' + fl + '<div class="needs"><b>Needs action</b><p>' + esc(why) + "</p></div></div>";
+        var canFix = !c.email && c.tier < 5;
+        bd = '<div class="bd">' + fl + '<div class="needs"><b>Needs action</b><p>' + esc(why) + "</p>" +
+          (canFix ? fixForm("email", c.id, "ar", "Contact email", "name@company.com") : "") + "</div></div>";
       } else {
         bd = '<div class="bd">' + fl + '<div class="addr"><b>To</b> ' + esc(d.to) + (d.cc ? " · <b>Cc</b> " + esc(d.cc) : "") +
           (c.tier === 4 ? " · <b>Send from founder</b>" : "") + "</div>" +
-          '<input class="subj" data-id="' + c.id + '" aria-label="Subject" value="' + esc(d.subject) + '">' +
-          '<textarea data-id="' + c.id + '" aria-label="Email body" spellcheck="true">' + esc(d.body) + "</textarea>" +
+          '<label class="flabel">Subject<input class="subj" data-id="' + c.id + '" value="' + esc(d.subject) + '"></label>' +
+          '<label class="flabel">Message<textarea data-id="' + c.id + '" spellcheck="true">' + esc(d.body) + "</textarea></label>" +
           '<div class="ft"><button class="btn primary" type="button" data-copy="' + c.id + '">Copy</button>' +
           '<a class="btn" target="_blank" rel="noopener" data-gmail="' + c.id + '" href="' + gmailUrl(d) + '">Open in Gmail</a>' +
           (state.dirty[c.id] ? '<button class="btn ghost" type="button" data-revert="' + c.id + '">Discard edits</button>' : "") +
@@ -471,12 +502,18 @@
 
   // ---------- Stages ----------
 
-  function setStage(s, quiet) {
+  function stageFromHash() { return /^#(aging|age|ar)/.test(location.hash) ? "age" : "bill"; }
+
+  // Each step is a history entry, so Back, Forward and a pasted #aging or #billing link all work.
+  function setStage(s, quiet, fromUrl) {
     state.stage = s;
     document.body.dataset.stage = s;
     $("stageBill").setAttribute("aria-selected", s === "bill");
     $("stageAge").setAttribute("aria-selected", s === "age");
-    try { history.replaceState(null, "", s === "age" ? "#aging" : "#billing"); } catch (e) { /* file:// */ }
+    var hash = s === "age" ? "#aging" : "#billing";
+    if (!fromUrl && location.hash !== hash) {
+      try { history[quiet ? "replaceState" : "pushState"](null, "", hash); } catch (e) { /* file:// */ }
+    }
     if (!quiet) window.scrollTo({ top: 0 });
     if (s === "age") document.querySelectorAll("#cards textarea").forEach(fit);
     else document.querySelectorAll("#invCards textarea").forEach(fit);
@@ -507,7 +544,12 @@
 
   function runBilling() {
     var b = state.bill;
-    b.run = BILL.billingRun(b.rows, b.map, b.period, { dateOrder: b.dateOrder });
+    var fx = withFixes(b.rows, b.map, b.fixes, billSrc() + "|");
+    b.run = BILL.billingRun(fx.rows, fx.map, b.period, { dateOrder: b.dateOrder });
+    b.run.invoices.forEach(function (inv) {
+      var f = b.fixes[billSrc() + "|" + inv.customer.toLowerCase()];
+      if (f) inv.notes.push((f.email && f.po ? "Email and PO" : f.email ? "Email" : "PO") + " added on this page, not in the file: update the record too");
+    });
     b.emails = {}; b.dirty = {};
     b.run.invoices.forEach(function (inv, i) {
       inv.id = i;
@@ -521,7 +563,8 @@
   }
 
   // Cover-email edits survive a re-run of the same month (a new sign-off, say), keyed by invoice number.
-  function billKey(inv) { var b = state.bill; return (billDemo() ? "demo" : b.fileName) + "|" + b.run.period.key + "|" + inv.number; }
+  function billSrc() { return billDemo() ? "demo" : state.bill.fileName; }
+  function billKey(inv) { return billSrc() + "|" + state.bill.run.period.key + "|" + inv.number; }
 
   function kindBadge(inv) {
     var n = inv.notes.join(" "), c = inv.contracts;
@@ -547,14 +590,14 @@
     if (needs.length) co.push('<span class="callout you"><b>' + needs.length + " to check before sending</b>: " + needs.map(esc).join(", ") + "</span>");
     if (run.bridge) co.push('<span class="callout"><b>' + signed(run.bridge.change) + "</b> on last month, " + run.bridge.items.length + " change" + (run.bridge.items.length === 1 ? "" : "s") + " explained</span>");
     var off = run.skipped.filter(function (s) { return !s.needsYou; }).length;
-    if (off) co.push('<span class="callout"><b>' + off + "</b> contract" + (off === 1 ? "" : "s") + " not billed this month</span>");
+    if (off) co.push('<span class="callout"><button class="jump" type="button" data-jump="notBilled"><b>' + off + "</b> contract" + (off === 1 ? "" : "s") + " not billed this month</button></span>");
     if (!billDemo() && dateCallout(run.dates)) co.push(dateCallout(run.dates));
     if (run.unreadable) co.push('<span class="callout"><b>' + run.unreadable + "</b> unreadable row" + (run.unreadable === 1 ? "" : "s") + " (no customer or fee)</span>");
     $("billCallouts").innerHTML = co.join("");
 
     $("billSrc").innerHTML = billDemo()
       ? '<span class="pill demo">Demo contracts</span><span>' + b.rows.length + " fictional contracts across " + new Set(b.rows.map(function (r) { return r[b.map.customer]; })).size + " customers</span>" +
-        '<span class="spacer"></span><label for="billFile" class="btn" tabindex="0" data-bpick>Upload contracts CSV</label><button class="btn ghost" type="button" id="billTpl">Template</button>'
+        '<span class="spacer"></span><label for="billFile" class="btn" tabindex="0" data-bpick>Upload contracts CSV</label><button class="btn ghost" type="button" id="billTpl">Download template</button>'
       : '<span class="pill file">' + esc(b.fileName) + "</span><span>" + b.rows.length + " contracts</span>" +
         '<span class="spacer"></span><label for="billFile" class="btn" tabindex="0" data-bpick>Choose another file</label><button class="btn ghost" type="button" id="billBackDemo">Back to demo</button>';
     if ($("billTpl")) $("billTpl").onclick = function () { download("billing-contracts-template.csv", billTemplate()); };
@@ -608,6 +651,7 @@
         '<div class="sr2">' + (inv.needsYou ? '<span class="tag you">Needs action</span>' : "") + kindBadge(inv) +
         '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div></summary>';
       var flags = inv.flags.length ? '<ul class="flags">' + inv.flags.map(function (f) { return "<li>" + esc(f) + "</li>"; }).join("") + "</ul>" : "";
+      if (inv.flags.some(function (f) { return /^PO required/.test(f); })) flags += '<div class="needs"><b>PO needed</b><p>Their AP will likely reject the invoice without one.</p>' + fixForm("po", inv.id, "bill", "PO number", "PO-12345") + "</div>";
       var notes = inv.notes.length ? '<ul class="notes">' + inv.notes.map(function (f) { return "<li>" + esc(f) + "</li>"; }).join("") + "</ul>" : "";
       var lines = '<table class="lines num"><thead><tr><th>Line</th><th class="r hide-sm">Qty</th><th class="r hide-sm">Rate</th><th class="r">Amount</th></tr></thead><tbody>' +
         inv.lines.map(function (l) {
@@ -616,13 +660,14 @@
       var view = '<button class="btn" type="button" data-view="' + inv.id + '">Download PDF</button>';
       var mail = inv.email
         ? '<div class="addr"><b>To</b> ' + esc(e.to) + (e.cc ? " · <b>Cc</b> " + esc(e.cc) : "") + "</div>" +
-          '<input class="subj" data-bid="' + inv.id + '" aria-label="Subject" value="' + esc(e.subject) + '">' +
-          '<textarea data-bid="' + inv.id + '" aria-label="Cover email" spellcheck="true">' + esc(e.body) + "</textarea>" +
+          '<label class="flabel">Subject<input class="subj" data-bid="' + inv.id + '" value="' + esc(e.subject) + '"></label>' +
+          '<label class="flabel">Cover email<textarea data-bid="' + inv.id + '" spellcheck="true">' + esc(e.body) + "</textarea></label>" +
           '<div class="ft"><button class="btn primary" type="button" data-bcopy="' + inv.id + '">Copy email</button>' +
           '<a class="btn" target="_blank" rel="noopener" data-bgmail="' + inv.id + '" href="' + gmailUrl(e) + '">Open in Gmail</a>' + view +
           (b.dirty[inv.id] ? '<button class="btn ghost" type="button" data-brevert="' + inv.id + '">Discard edits</button>' : "") +
           '<span class="src">Template' + (b.dirty[inv.id] ? " · edited" : "") + "</span></div>"
-        : '<div class="needs"><b>Needs action</b><p>No billing email on the contract. Add one and re-run before this invoice can go out.</p></div><div class="ft">' + view + "</div>";
+        : '<div class="needs"><b>Needs action</b><p>No billing email on the contract. Add one here to write the cover email, and update the record too.</p>' +
+          fixForm("email", inv.id, "bill", "Billing email", "ap@company.com") + '</div><div class="ft">' + view + "</div>";
       return '<details class="card' + (inv.needsYou ? " you" : "") + '" data-inv="' + inv.id + '"' + (b.open[billKey(inv)] ? " open" : "") + ">" + summary +
         '<div class="bd">' + flags + notes + lines + mail + "</div></details>";
     }).join("");
@@ -648,11 +693,12 @@
     var run = state.bill.run;
     if (!run) return;
     var ready = run.invoices.filter(function (i) { return !i.needsYou; }).length;
-    $("handoff").innerHTML = "<p><b>" + run.invoices.length + " invoices · " + bK(run.total) + "</b>, issued " + esc(AR.fmtShortDate(run.period.end)) + ". " +
-      ready + " ready, " + (run.invoices.length - ready) + " to check first.</p>" +
-      '<button class="btn" type="button" id="dlPdfs">All invoices PDF</button>' +
-      '<button class="btn" type="button" id="dlQbo">QuickBooks import CSV</button>' +
-      '<button class="btn" type="button" id="dlAr">AR rows CSV</button>' +
+    var all = ready === run.invoices.length;
+    $("handoff").innerHTML = "<p><b>" + (all ? "All " + ready : ready + " of " + run.invoices.length) + " ready.</b> " +
+      (all ? "Import them into QuickBooks" : "Check the flagged ones below, then import them into QuickBooks") + " and send them to the aging run.</p>" +
+      '<button class="btn" type="button" id="dlPdfs">All PDFs</button>' +
+      '<button class="btn" type="button" id="dlQbo">QuickBooks CSV</button>' +
+      '<button class="btn" type="button" id="dlAr" title="The invoices as rows for the aging run\'s own upload">AR rows CSV</button>' +
       '<button class="btn primary" type="button" id="toAging">Send to aging run</button>';
     $("dlPdfs").onclick = function (e) { downloadPDF(run.invoices, "invoices-" + run.period.key + ".pdf", e.target); };
     // Demo files are labelled and keep the page's $xx masking.
@@ -772,6 +818,61 @@
 
   // ---------- Events ----------
 
+  // A draft still signed with the placeholder name doesn't leave the page: Copy and Open in Gmail
+  // open the signature settings first (or point at the message, if the name is set but the text was edited).
+  var PLACEHOLDERS = [AR.DEFAULT_SETTINGS.senderName, AR.DEFAULT_SETTINGS.founderName];
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest && e.target.closest("[data-copy],[data-gmail],[data-bcopy],[data-bgmail]");
+    if (!t) return;
+    var ds = t.dataset;
+    var d = ds.copy != null ? state.drafts[ds.copy] : ds.gmail != null ? state.drafts[ds.gmail] : state.bill.emails[ds.bcopy != null ? ds.bcopy : ds.bgmail];
+    var name = PLACEHOLDERS.filter(function (n) { return d && d.body.indexOf(n) !== -1; })[0];
+    if (!name) return;
+    e.preventDefault(); e.stopPropagation();
+    var founder = name === AR.DEFAULT_SETTINGS.founderName;
+    var setting = founder ? state.settings.founderName : state.settings.senderName;
+    if (setting !== name) {
+      // The setting is filled in; this draft's text still has the old sign-off.
+      var ta = t.closest(".card").querySelector("textarea");
+      if (ta) { ta.focus(); var at = ta.value.indexOf(name); if (at !== -1) ta.setSelectionRange(at, at + name.length); }
+      return;
+    }
+    var m = $("sigMsg");
+    m.textContent = founder ? "Tier 4 emails go out from the founder. Add their name and role, then send again." : "Add the name and role to sign emails with, then send again.";
+    m.hidden = false;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    $("settings").open = true;
+    $(founder ? "fName" : "sName").focus({ preventScroll: true });
+  }, true);
+
+  // Missing email or PO typed into a Needs action card.
+  document.addEventListener("submit", function (e) {
+    var f = e.target;
+    if (!f.classList || !f.classList.contains("fix")) return;
+    e.preventDefault();
+    var v = f.querySelector("input").value.trim(), field = f.dataset.field, err = f.querySelector(".err");
+    if (field === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { err.textContent = "That doesn't look like an email address."; err.hidden = false; return; }
+    if (!v) return;
+    var fixes, key;
+    if (f.dataset.scope === "ar") {
+      var c = state.result.customers[f.dataset.fid];
+      fixes = state.fixes; key = editKey(c);
+      state.open[key] = true;
+    } else {
+      var inv = state.bill.run.invoices[f.dataset.fid];
+      fixes = state.bill.fixes; key = billSrc() + "|" + inv.customer.toLowerCase();
+      state.bill.open[billKey(inv)] = true;
+    }
+    fixes[key] = Object.assign({}, fixes[key]);
+    fixes[key][field] = v;
+    if (f.dataset.scope === "ar") runAnalysis(); else runBilling();
+  });
+
+  document.addEventListener("click", function (e) {
+    var j = e.target.closest && e.target.closest("[data-jump]");
+    if (j) $(j.dataset.jump).scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+
   $("runDate").addEventListener("change", function (e) {
     var t = AR.parseDate(e.target.value);
     if (t == null) return;
@@ -807,6 +908,7 @@
     state.settings.founderName = $("fName").value.trim() || AR.DEFAULT_SETTINGS.founderName;
     state.settings.founderRole = $("fRole").value.trim() || AR.DEFAULT_SETTINGS.founderRole;
     $("settings").open = false;
+    $("sigMsg").hidden = true;
     runAnalysis();
     if (state.bill.run) runBilling();
   });
@@ -909,6 +1011,7 @@
   loadDemo();
   loadBillDemo();
   loadScript();
-  setStage(/^#(aging|age|ar)/.test(location.hash) ? "age" : "bill", true);
+  setStage(stageFromHash(), true);
+  window.addEventListener("hashchange", function () { if (stageFromHash() !== state.stage) setStage(stageFromHash(), false, true); });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { document.querySelectorAll("#cards textarea").forEach(fit); });
 })();

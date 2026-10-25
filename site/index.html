@@ -69,6 +69,7 @@ header.top .wrap{display:flex;align-items:center;justify-content:space-between;g
 .pop{position:absolute;right:0;top:40px;width:280px;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:10px;z-index:10;box-shadow:0 8px 24px rgba(29,36,48,.08)}
 .pop label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--ink-2);font-weight:500}
 .pop input{height:32px;border:1px solid var(--line-2);border-radius:8px;padding:0 8px;font-size:13px}
+.popmsg{margin:0;padding:8px 10px;border-radius:8px;background:var(--orange-soft);color:var(--orange-ink);font-size:12px;font-weight:500}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--line-2);background:var(--bg);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;text-decoration:none;color:var(--ink)}
 .btn:hover{border-color:var(--ink-3)}
 .btn.primary{background:var(--orange);border-color:var(--orange);color:#fff}
@@ -123,12 +124,12 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
 .aging th{font-weight:500;color:var(--ink-3);text-align:right;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
 .aging th:first-child,.aging td:first-child{text-align:left;padding-left:0}
 .aging td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:right;vertical-align:middle;white-space:nowrap}
-.aging td.name{white-space:normal;max-width:240px}
+.aging td.name{white-space:normal;min-width:260px}
 .aging td.name .n{font-weight:500;overflow-wrap:anywhere}
 .aging td.name .meta{display:flex;gap:6px;align-items:center;margin-top:2px;font-size:11px;color:var(--ink-3)}
 .aging td.zero{color:var(--line-2)}
 .aging td.tot{font-weight:600}
-.aging td.barcell{width:180px;padding-right:0}
+.aging td.barcell{width:140px;padding-right:0}
 .aging tfoot td{border-bottom:none;font-weight:600;color:var(--ink)}
 .bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--surface)}
 .bar span{display:block;height:100%}
@@ -136,7 +137,8 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
 .tag{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap}
 .tag.demo{background:var(--orange-soft);color:var(--orange-ink)}
 .tag.you{background:var(--you);color:#fff}
-.excluded{margin-top:12px;font-size:12px;color:var(--ink-3)}
+.excluded{margin-top:12px;font-size:13px;color:var(--ink-2)}
+.excluded b{color:var(--ink);font-weight:600}
 
 /* Drafts */
 .status{font-size:12px;color:var(--ink-3);margin:-8px 0 16px;display:flex;align-items:center;gap:8px}
@@ -165,22 +167,27 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
 .card .sr2{display:flex;align-items:center;gap:8px;flex:none}
 .card .chev{width:16px;height:16px;color:var(--ink-3);transition:transform .15s}
 .card[open] .chev{transform:rotate(180deg)}
-.tier{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;border:1px solid}
-.tier i{width:8px;height:8px;border-radius:2px}
+.tier{display:inline-flex;align-items:center;gap:5px;font-weight:600;white-space:nowrap}
+.tier i{width:7px;height:7px;border-radius:2px}
 .flags{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none;font-size:12px;color:var(--ink-2)}
 .flags li::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--ink-3);margin:0 8px 2px 0}
 .flags li.tone::before{background:var(--navy)}
 .card .bd{padding:12px 16px 16px;display:flex;flex-direction:column;gap:8px}
 .addr{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}
 .addr b{color:var(--ink-2);font-weight:500}
-.card input.subj{width:100%;height:34px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font-weight:600;font-size:13px;background:var(--surface)}
-.card textarea{width:100%;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px;line-height:1.55;resize:vertical;background:var(--surface)}
-.card input.subj:focus,.card textarea:focus{background:var(--bg);border-color:var(--line-2)}
+.card .flabel{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:500;color:var(--ink-3)}
+.card input.subj{width:100%;height:34px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;font-weight:600;font-size:13px;background:var(--bg);color:var(--ink)}
+.card textarea{width:100%;min-height:120px;overflow:hidden;border:1px solid var(--line-2);border-radius:8px;padding:10px;font-size:13px;line-height:1.55;resize:vertical;background:var(--bg);color:var(--ink)}
+.card input.subj:hover,.card textarea:hover{border-color:var(--ink-3)}
+.card input.subj:focus,.card textarea:focus{border-color:var(--navy);outline:none;box-shadow:0 0 0 3px var(--navy-soft)}
 .card .ft{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .card .src{margin-left:auto;font-size:11px;color:var(--ink-3)}
 .needs{padding:12px 14px;display:flex;flex-direction:column;gap:4px;background:var(--you-soft);border-radius:8px}
 .needs b{color:var(--you);font-size:14px}
 .needs p{margin:0;font-size:13px;color:var(--ink-2)}
+.fix{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.fix input{flex:1 1 220px;height:32px;border:1px solid var(--line-2);border-radius:8px;padding:0 10px;font-size:13px;background:var(--bg)}
+.fix .err{flex-basis:100%}
 .listed{margin-top:16px;font-size:13px;color:var(--ink-2)}
 
 details.rubric{margin-top:24px;border:1px solid var(--line);border-radius:var(--r)}
@@ -290,7 +297,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 .bridge .tot{font-weight:700;color:var(--navy)}
 .bridge .bar3{padding-left:16px}
 .bridge .track{height:10px;border-radius:3px;background:var(--surface);position:relative;overflow:hidden}
-.bridge .track i{position:absolute;top:0;bottom:0;border-radius:2px;min-width:3px}
+.bridge .track i{position:absolute;top:0;bottom:0;border-radius:2px;min-width:6px}
 .bridge .track i.up{background:#7FB596}
 .bridge .track i.down{background:var(--b-61)}
 .bridge .track i.base{background:var(--navy)}
@@ -304,10 +311,12 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
 .lines tfoot td{border-bottom:none;font-weight:600}
 .notes{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none;font-size:12px;color:var(--ink-2)}
 .notes li::before{content:"";display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--navy);margin:0 8px 2px 0}
-.handoff{border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+.handoff{margin-top:20px;border:1px solid var(--line);border-radius:var(--r);padding:12px 16px;display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;background:var(--surface)}
 .handoff p{margin:0;flex:1 1 260px;font-size:13px;color:var(--ink-2)}
 .handoff p b{color:var(--ink)}
 .sent{margin-top:12px;font-size:13px;color:#2F6F4E}
+.callout button.jump{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line-2);text-underline-offset:3px}
+.callout button.jump:hover{text-decoration-color:currentColor}
 .callout .link{border:0;background:none;padding:0;margin-left:6px;color:var(--indigo);text-decoration:underline;cursor:pointer;font-size:13px}
 
 @media (max-width:760px){
@@ -325,7 +334,9 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   .runbar .wrap{gap:6px}
   .runbar .field{gap:6px}
   .runbar .btn{padding:0 10px}
-  .tabs button{padding:0 10px}
+  .tabs button{padding:0 8px}
+  .card .facts .sep{display:none}
+  .card .facts .tier{flex-basis:100%}
   .seg button{padding:0 8px}
   .seg span:first-child{display:none}
   .seg .divider{margin:0 2px}
@@ -334,7 +345,7 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
   .gtable tr{display:grid;grid-template-columns:1fr auto;gap:4px 8px;padding:10px 0;border-bottom:1px solid var(--line)}
   .gtable td{padding:0;border:none}
   .gtable td.u{grid-column:1 / -1}
-  .signoff summary.btn{padding:0 6px}
+  .signoff summary.btn{padding:0 4px;margin-right:4px}
   main.wrap{padding-top:24px}
   section{margin-top:40px}
   .headline h1{font-size:28px}
@@ -402,8 +413,9 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
       <button role="tab" id="tabUpload" type="button" aria-selected="false">Your data</button>
     </div>
     <details class="signoff" id="settings">
-      <summary class="btn ghost" aria-label="Sign-off settings">Sign-off</summary>
+      <summary class="btn ghost" aria-label="Email signature"><span class="lg">Email signature</span><span class="sm">Signature</span></summary>
       <div class="pop">
+        <p class="popmsg" id="sigMsg" hidden></p>
         <label>Sender name<input id="sName"></label>
         <label>Sender role<input id="sRole"></label>
         <label>Tier 4 sender (founder)<input id="fName"></label>
@@ -423,8 +435,16 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
         <div class="figures num" id="billFigures"></div>
       </div>
       <div class="callouts" id="billCallouts"></div>
+      <div class="handoff" id="handoff"></div>
+      <p class="sent" id="sentNote" hidden></p>
       <div class="srcrow" id="billSrc"></div>
       <div id="billMapper"></div>
+      <details class="guide" id="billGuide">
+        <summary>Columns the contracts file needs</summary>
+        <p class="sub">Export active contracts or deals from HubSpot, or keep them in a Sheet, as CSV with one row per contract. Use these column names, or download the template. If your file names a column differently, you match it after choosing the file.</p>
+        <div class="gtable" id="billGuideTable"></div>
+        <p class="sub small">Slash dates are read as US (MM/DD/YYYY) unless the file shows they are day first, and you can choose when matching columns. ISO dates (2026-10-16) and "Oct 16, 2026" also work.</p>
+      </details>
     </section>
 
     <section id="bridgeSec">
@@ -444,19 +464,8 @@ body[data-stage="bill"] .age-only,body[data-stage="age"] .bill-only{display:none
       </details>
     </section>
 
-    <section>
-      <h2>Hand off</h2>
-      <p class="sub">Import the invoices into QuickBooks, then send them into the aging run so they're tracked from the day they're issued.</p>
-      <div class="handoff" id="handoff"></div>
-      <p class="sent" id="sentNote" hidden></p>
-    </section>
 
-    <details class="guide" id="billGuide">
-      <summary>Columns the contracts file needs</summary>
-      <p class="sub">Export active contracts or deals from HubSpot, or keep them in a Sheet, as CSV with one row per contract. Use these column names, or download the template. If your file names a column differently, you match it after choosing the file.</p>
-      <div class="gtable" id="billGuideTable"></div>
-      <p class="sub small">Slash dates are read as US (MM/DD/YYYY) unless the file shows they are day first, and you can choose when matching columns. ISO dates (2026-10-16) and "Oct 16, 2026" also work.</p>
-    </details>
+
   </div>
 
   <div id="ageStage" class="age-only">

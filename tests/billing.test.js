@@ -199,3 +199,22 @@ test("day-first contract dates are read day first, and an unreadable date is ski
   assert.strictEqual(inv(run, "Acme").total, 1700); // 17 of 31 days
   assert.ok(run.skipped.some((s) => s.customer === "Bad" && /can't be read/.test(s.reason)));
 });
+
+test("demo CSV downloads keep their layout but hide every amount", () => {
+  const P = BILL.periodOf(OCT).start;
+  const p = AR.parseCSV(DEMO.contractsCSV(P));
+  const run = BILL.billingRun(p.rows, BILL.autoMap(p.headers), P);
+
+  const qbo = AR.parseCSV(BILL.importCSV(run, { mask: true }));
+  assert.strictEqual(qbo.rows.length, run.invoices.reduce((s, i) => s + i.lines.length, 0));
+  assert.ok(qbo.rows.every((r) => r.ItemRate === "xx" && r.ItemAmount === "xx"));
+  assert.ok(qbo.rows.every((r) => !/\$\s?\d/.test(r.ItemDescription)));
+
+  const ar = AR.parseCSV(BILL.arCSV(run, { mask: true }));
+  assert.strictEqual(ar.rows.length, run.invoices.length);
+  assert.ok(ar.rows.every((r) => r.Amount === "xx" && r["Amount paid"] === "xx"));
+  assert.ok(ar.rows.every((r) => r["Invoice number"] && r["Due date"]));
+
+  // Unmasked by default, so uploaded files still export real figures.
+  assert.ok(!/xx/.test(BILL.importCSV(run)));
+});

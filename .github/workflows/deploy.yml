@@ -3,19 +3,14 @@ name: Test and deploy
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +19,24 @@ jobs:
           node-version: "22"
       - name: Aging, rubric and draft rules must pass the test set
         run: node --test tests/*.test.js
+
+  # Pull requests stop at the tests; only main is published.
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
       - name: Stamp script URLs with the commit so browsers never mix old and new files
         run: sed -i "s/__V__/${GITHUB_SHA::7}/g" site/index.html
       - uses: actions/configure-pages@v5
@@ -32,6 +45,3 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
